@@ -13,6 +13,7 @@
 #define DEFAULT_OUTPUT_DIR "/media/fat/printers"
 
 typedef enum {
+    MODEL_AUTO,
     MODEL_IMAGEWRITER,
     MODEL_EPSON,
     MODEL_EPSON_TPS,
@@ -47,7 +48,13 @@ typedef struct {
 
 // Active Print Job State
 typedef struct {
-    PrinterModel model;
+    PrinterModel model;           // Configured model (MODEL_AUTO or explicit)
+    PrinterModel active_model;    // Currently running parser model
+    PrinterModel fallback_model;  // Fallback if plain text without escapes
+    char core_name[64];
+    uint8_t sniff_buf[256];
+    int sniff_len;
+    bool sniff_done;
     PaperSize paper_size;
     int dpi;
     Canvas canvas;
@@ -62,6 +69,7 @@ typedef struct {
     char device[256];
     int baud;
     PrinterModel model;
+    char core_name[64];
     char output_dir[512];
     int timeout_sec;
     PaperSize paper_size;

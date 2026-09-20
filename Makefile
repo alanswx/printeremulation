@@ -3,8 +3,9 @@ CFLAGS ?= -O2 -Wall -Wextra -Wno-format -Isrc
 LDFLAGS ?= -lm
 
 # Check for ARM cross compiler on host, otherwise fallback to Docker container
+ARM_CC ?= arm-none-linux-gnueabihf-gcc
 ARM_CC_EXISTS := $(shell which $(ARM_CC) 2>/dev/null)
-DOCKER_IMAGE ?= mrext/armbuild:latest
+DOCKER_IMAGE ?= mister-build:latest
 
 SRCS = $(wildcard src/*.c)
 
@@ -23,11 +24,11 @@ arm:
 	@if [ -n "$(ARM_CC_EXISTS)" ]; then \
 		echo "Building with host $(ARM_CC)..."; \
 		$(ARM_CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET); \
-		arm-linux-gnueabihf-strip $(ARM_TARGET); \
+		arm-none-linux-gnueabihf-strip $(ARM_TARGET); \
 	else \
 		echo "Host ARM cross compiler not found, building with Docker ($(DOCKER_IMAGE))..."; \
 		docker run --rm -v "$$(pwd)":/work -w /work $(DOCKER_IMAGE) sh -c \
-			"arm-linux-gnueabihf-gcc $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET) && arm-linux-gnueabihf-strip $(ARM_TARGET)"; \
+			"arm-none-linux-gnueabihf-gcc $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET) && arm-none-linux-gnueabihf-strip $(ARM_TARGET)"; \
 	fi
 	@echo "Built and stripped ARM binary: $(ARM_TARGET)"
 

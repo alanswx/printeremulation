@@ -1,8 +1,4 @@
-/**
- * mister_printerd - MiSTer FPGA Retro Printer Emulation Daemon
- * Translates serial / parallel retro printer streams into PDF documents.
- */
-
+#define _GNU_SOURCE
 #include "printer.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -95,7 +91,8 @@ static void print_usage(const char *prog) {
     printf("Options:\n");
     printf("  -d <dev>       Serial device path (default: %s or '-' for stdin)\n", DEFAULT_DEVICE);
     printf("  -b <baud>      Baud rate (default: %d)\n", DEFAULT_BAUD);
-    printf("  -m <model>     Printer model: imagewriter | epson | epson-tps | adam | mps803 (default: imagewriter)\n");
+    printf("  -m <model>     Printer model: auto | imagewriter | epson | epson-tps | adam | mps803 (default: auto)\n");
+    printf("  -c <core>      Active core name (for auto-detect fallback, e.g. Apple-II, ColecoAdam, C64)\n");
     printf("  -o <dir>       Output directory for PDFs (default: %s)\n", DEFAULT_OUTPUT_DIR);
     printf("  -t <sec>       Inactivity timeout in seconds to commit job (default: %d)\n", DEFAULT_TIMEOUT_SEC);
     printf("  -s <size>      Paper size: letter | a4 (default: letter)\n");
@@ -105,8 +102,76 @@ static void print_usage(const char *prog) {
     printf("  -h             Show this help message\n");
 }
 
+static PrinterModel get_core_fallback_model(const char *core) {
+    if (!core || !*core) return MODEL_EPSON_TPS;
+    if (strcasestr(core, "Apple-II") || strcasestr(core, "apple2") ||
+        strcasestr(core, "iigs") || strcasestr(core, "Mac")) {
+        return MODEL_IMAGEWRITER;
+    }
+    if (strcasestr(core, "Adam")) {
+        return MODEL_ADAM;
+    }
+    if (strcasestr(core, "C64") || strcasestr(core, "VIC20") ||
+        strcasestr(core, "PET") || strcasestr(core, "C16") || strcasestr(core, "Plus4")) {
+        return MODEL_MPS803;
+    }
+    return MODEL_EPSON_TPS;
+}
+
+static PrinterModel detect_model_from_stream(const uint8_t *buf, int len) {
+    for (int i = 0; i < len; i++) {
+        if (buf[i] == 0x1B) { // ESC
+            if (i + 1 < len) {
+                uint8_t c1 = buf[i + 1];
+                // Unambiguous Epson ESC/P markers:
+                // ESC @: Initialize / Reset
+                // ESC 3 n: n/216" line spacing
+                // ESC A n: n/72" line spacing
+                // ESC 2 / ESC 0 / ESC 1: standard spacings
+                // ESC *: bit image graphics
+                // ESC J / ESC j: immediate feed
+                if (c1 == '@' || c1 == '3' || c1 == 'A' || c1 == '*' ||
+                    c1 == '2' || c1 == '0' || c1 == '1' || c1 == 'J' || c1 == 'j') {
+                    return MODEL_EPSON_TPS;
+                }
+
+                // Unambiguous Apple ImageWriter markers:
+                // ESC c: Software reset
+                // ESC T nn: line pitch in 1/144" (followed by 2 ASCII digits)
+                // ESC G nnnn / ESC S nnnn: 72/144 DPI graphics (followed by 4 ASCII digits)
+                // ESC P / ESC p: 10 cpi pitch
+                // ESC >: bidirectional
+                // ESC N: 8 lines/inch
+                if (c1 == 'c' || c1 == 'T' || c1 == 'G' || c1 == 'g' ||
+                    c1 == 'S' || c1 == 's' || c1 == 'P' || c1 == 'p' ||
+                    c1 == '>' || c1 == 'N') {
+                    return MODEL_IMAGEWRITER;
+                }
+
+                // ESC K / L / Y / Z:
+                // In Epson, ESC K is graphics followed by two binary length bytes nL, nH.
+                // In ImageWriter, ESC K is color select followed by an ASCII digit '0'..'7'.
+                if (c1 == 'K' || c1 == 'L' || c1 == 'Y' || c1 == 'Z') {
+                    if (i + 2 < len) {
+                        uint8_t c2 = buf[i + 2];
+                        if (c1 == 'K' && c2 >= '0' && c2 <= '7') {
+                            return MODEL_IMAGEWRITER;
+                        } else {
+                            return MODEL_EPSON_TPS;
+                        }
+                    }
+                }
+            }
+        } else if (buf[i] == 0x08) { // Commodore PETSCII graphics switch
+            return MODEL_MPS803;
+        }
+    }
+    return MODEL_AUTO;
+}
+
 static void reset_model_parser(JobState *job) {
-    switch (job->model) {
+    PrinterModel m = (job->model == MODEL_AUTO) ? job->active_model : job->model;
+    switch (m) {
         case MODEL_IMAGEWRITER:
             parser_imagewriter_init(job);
             break;
@@ -122,11 +187,14 @@ static void reset_model_parser(JobState *job) {
         case MODEL_MPS803:
             parser_mps803_init(job);
             break;
+        default:
+            break;
     }
 }
 
 static void dispatch_byte(JobState *job, uint8_t byte) {
-    switch (job->model) {
+    PrinterModel m = (job->model == MODEL_AUTO) ? job->active_model : job->model;
+    switch (m) {
         case MODEL_IMAGEWRITER:
             parser_imagewriter_byte(job, byte);
             break;
@@ -140,6 +208,8 @@ static void dispatch_byte(JobState *job, uint8_t byte) {
         case MODEL_MPS803:
             parser_mps803_byte(job, byte);
             break;
+        default:
+            break;
     }
 }
 
@@ -147,7 +217,8 @@ int main(int argc, char **argv) {
     PrinterConfig cfg = {
         .device = DEFAULT_DEVICE,
         .baud = DEFAULT_BAUD,
-        .model = MODEL_IMAGEWRITER,
+        .model = MODEL_AUTO,
+        .core_name = "",
         .output_dir = DEFAULT_OUTPUT_DIR,
         .timeout_sec = DEFAULT_TIMEOUT_SEC,
         .paper_size = PAPER_LETTER,
@@ -157,6 +228,18 @@ int main(int argc, char **argv) {
         .daemon_mode = false
     };
 
+    // Auto-detect core name from /tmp/CORENAME if available
+    FILE *fc = fopen("/tmp/CORENAME", "r");
+    if (fc) {
+        if (fgets(cfg.core_name, sizeof(cfg.core_name), fc)) {
+            size_t l = strlen(cfg.core_name);
+            while (l > 0 && (cfg.core_name[l-1] == '\r' || cfg.core_name[l-1] == '\n')) {
+                cfg.core_name[--l] = '\0';
+            }
+        }
+        fclose(fc);
+    }
+
     // If /media/fat doesn't exist (e.g. testing on host PC/Mac), use ./printers
     struct stat st;
     if (stat("/media/fat", &st) == -1) {
@@ -164,17 +247,20 @@ int main(int argc, char **argv) {
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:b:m:o:t:s:r:Bvh")) != -1) {
+    while ((opt = getopt(argc, argv, "d:b:m:c:o:t:s:r:Bvh")) != -1) {
         switch (opt) {
             case 'd': strncpy(cfg.device, optarg, sizeof(cfg.device) - 1); break;
             case 'b': cfg.baud = atoi(optarg); break;
             case 'm':
-                if (strcasecmp(optarg, "epson") == 0) cfg.model = MODEL_EPSON;
+                if (strcasecmp(optarg, "auto") == 0) cfg.model = MODEL_AUTO;
+                else if (strcasecmp(optarg, "imagewriter") == 0) cfg.model = MODEL_IMAGEWRITER;
+                else if (strcasecmp(optarg, "epson") == 0) cfg.model = MODEL_EPSON;
                 else if (strcasecmp(optarg, "epson-tps") == 0) cfg.model = MODEL_EPSON_TPS;
                 else if (strcasecmp(optarg, "adam") == 0) cfg.model = MODEL_ADAM;
                 else if (strcasecmp(optarg, "mps803") == 0) cfg.model = MODEL_MPS803;
-                else cfg.model = MODEL_IMAGEWRITER;
+                else cfg.model = MODEL_AUTO;
                 break;
+            case 'c': strncpy(cfg.core_name, optarg, sizeof(cfg.core_name) - 1); break;
             case 'o': strncpy(cfg.output_dir, optarg, sizeof(cfg.output_dir) - 1); break;
             case 't': cfg.timeout_sec = atoi(optarg); break;
             case 's':
@@ -209,8 +295,13 @@ int main(int argc, char **argv) {
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
 
-    printf("[printerd] Starting mister_printerd (Model: %d, Baud: %d, Device: %s, Out: %s)\n",
-           cfg.model, cfg.baud, cfg.device, cfg.output_dir);
+    printf("[printerd] Starting mister_printerd (Model: %s, Core: '%s', Baud: %d, Device: %s, Out: %s)\n",
+           (cfg.model == MODEL_AUTO) ? "auto" :
+           (cfg.model == MODEL_IMAGEWRITER) ? "imagewriter" :
+           (cfg.model == MODEL_EPSON) ? "epson" :
+           (cfg.model == MODEL_EPSON_TPS) ? "epson-tps" :
+           (cfg.model == MODEL_ADAM) ? "adam" : "mps803",
+           cfg.core_name, cfg.baud, cfg.device, cfg.output_dir);
 
     int fd = open_serial_port(cfg.device, cfg.baud);
     if (fd < 0) {
@@ -220,10 +311,17 @@ int main(int argc, char **argv) {
     JobState job;
     memset(&job, 0, sizeof(job));
     job.model = cfg.model;
+    job.fallback_model = get_core_fallback_model(cfg.core_name);
+    job.active_model = (cfg.model == MODEL_AUTO) ? MODEL_AUTO : cfg.model;
+    job.sniff_done = (cfg.model != MODEL_AUTO);
+    job.sniff_len = 0;
     job.paper_size = cfg.paper_size;
     job.dpi = cfg.dpi;
     canvas_init(&job.canvas, cfg.dpi, cfg.paper_size);
-    reset_model_parser(&job);
+
+    if (job.model != MODEL_AUTO) {
+        reset_model_parser(&job);
+    }
 
     struct pollfd pfd;
     pfd.fd = fd;
@@ -240,12 +338,34 @@ int main(int argc, char **argv) {
             if (n > 0) {
                 if (!job.job_active) {
                     job_start(&job, &cfg);
-                    reset_model_parser(&job);
+                    if (job.model != MODEL_AUTO) {
+                        reset_model_parser(&job);
+                    }
                 }
                 job.last_data_time = (long)now;
 
                 for (ssize_t i = 0; i < n; i++) {
-                    dispatch_byte(&job, read_buf[i]);
+                    uint8_t b = read_buf[i];
+                    if (job.model == MODEL_AUTO && !job.sniff_done) {
+                        if (job.sniff_len < (int)sizeof(job.sniff_buf)) {
+                            job.sniff_buf[job.sniff_len++] = b;
+                        }
+                        PrinterModel detected = detect_model_from_stream(job.sniff_buf, job.sniff_len);
+                        if (detected != MODEL_AUTO || job.sniff_len >= 128) {
+                            job.active_model = (detected != MODEL_AUTO) ? detected : job.fallback_model;
+                            job.sniff_done = true;
+                            if (cfg.verbose) {
+                                printf("[printerd] Auto-detected printer model: %d (stream: %d, fallback: %d)\n",
+                                       job.active_model, detected, job.fallback_model);
+                            }
+                            reset_model_parser(&job);
+                            for (int j = 0; j < job.sniff_len; j++) {
+                                dispatch_byte(&job, job.sniff_buf[j]);
+                            }
+                        }
+                    } else {
+                        dispatch_byte(&job, b);
+                    }
                 }
             } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 if (cfg.verbose) perror("[printerd] read error");
@@ -262,14 +382,36 @@ int main(int argc, char **argv) {
         if (job.job_active) {
             if ((long)now - job.last_data_time >= cfg.timeout_sec) {
                 if (cfg.verbose) printf("[printerd] Inactivity timeout reached (%ds), finalizing job...\n", cfg.timeout_sec);
+                if (job.model == MODEL_AUTO && !job.sniff_done && job.sniff_len > 0) {
+                    job.active_model = job.fallback_model;
+                    job.sniff_done = true;
+                    reset_model_parser(&job);
+                    for (int j = 0; j < job.sniff_len; j++) {
+                        dispatch_byte(&job, job.sniff_buf[j]);
+                    }
+                }
                 job_finalize(&job, &cfg);
-                reset_model_parser(&job);
+                if (job.model == MODEL_AUTO) {
+                    job.active_model = MODEL_AUTO;
+                    job.sniff_done = false;
+                    job.sniff_len = 0;
+                } else {
+                    reset_model_parser(&job);
+                }
             }
         }
     }
 
     // Flush any pending job on termination
     if (job.job_active) {
+        if (job.model == MODEL_AUTO && !job.sniff_done && job.sniff_len > 0) {
+            job.active_model = job.fallback_model;
+            job.sniff_done = true;
+            reset_model_parser(&job);
+            for (int j = 0; j < job.sniff_len; j++) {
+                dispatch_byte(&job, job.sniff_buf[j]);
+            }
+        }
         job_finalize(&job, &cfg);
     }
 
