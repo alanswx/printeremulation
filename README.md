@@ -18,9 +18,10 @@ This project enables software running on vintage computer cores—such as Broder
   * Self-contained ANSI C [PDFGen](src/pdfgen.h) engine (~25 KB compiled, Public Domain).
   * Direct 24-bit RGB and 8-bit grayscale raster embedding at standard physical page sizes (US Letter 8.5x11" / A4).
   * No Ghostscript, CUPS, ImageMagick, or Python runtime dependencies on MiSTer Linux.
-* **Dual Transport Architecture**:
+* **Triple Transport Architecture**:
   * **Serial**: Direct routing via Cyclone V HPS hardware UART (`/dev/ttyS1`), managed as UART Mode 7 (`Printer`) via `/sbin/uartmode`.
   * **Parallel (Centronics / LPT)**: FPGA BRAM FIFO drained via SPI `user_io` (`UIO_PRINTER_GET`), allowing simultaneous serial modems and parallel printers.
+  * **Shared DDR3 Framebuffer (Consoles)**: Direct HPS memory capture (`shmem_map`) for console-integrated printers like the **Casio Loopy** (capturing the 128x112 CMY sticker buffer at physical address `0x3E400000`).
 
 ---
 
@@ -50,6 +51,7 @@ printeremulation/
 │   ├── imagewriter_reference.md        # Apple ImageWriter I/II/LQ command reference
 │   ├── epson_escp_reference.md         # Epson ESC/P 9-pin/24-pin command reference
 │   ├── apple2_printer_interfaces.md    # Super Serial Card, Grappler+, & IIgs SCC interfaces
+│   ├── casio_loopy_printer.md          # Casio Loopy thermal sticker printer architecture
 │   └── mister_integration_plan.md      # MiSTer Main C++ and RTL integration roadmap
 ├── patches/                            # Integration patches for MiSTer repositories
 │   ├── mister_main_printer.patch       # Main_MiSTer patch (OSD menu, user_io, support/printer)
@@ -108,6 +110,8 @@ Copies `mister_printerd` to `root@mister.local:/media/fat/mister_printerd` and s
 - [x] Multi-page PDF output with auto-timestamping and 4-second flush timeout.
 - [x] MiSTer Main integration (UART Mode 7 `Printer` in OSD and `/sbin/uartmode`).
 - [x] Upstream fork synchronization with `Main_MiSTer` and Dani's Quadra 800 PR.
+- [x] Reverse-engineered Casio Loopy RTL DDR3 buffer (`0x3E400000`, 128x112 CMY) and color palette.
 - [ ] Connect SCC Printer port to `UART_*` in the `Apple-IIgs` core.
 - [ ] Connect Super Serial Card in Slot 1 to `UART_*` in the `Apple-II` core.
+- [ ] Implement HPS DDR3 sticker extractor for `Loopy_MiSTer` (PNG / printable PDF sticker sheet).
 - [ ] End-to-end live testing with The Print Shop on hardware.

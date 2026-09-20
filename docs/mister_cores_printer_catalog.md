@@ -23,12 +23,18 @@ Across the 78+ computer platforms supported on MiSTer, printer communication fal
    - Mechanism: 8-bit data latch (`D0-D7`) + `/STROBE` output pulse + `BUSY` / `/ACK` input status lines.
    - MiSTer Fit: Requires a shared FPGA BRAM FIFO module (`virtual_centronics.v`) drained via SPI `user_io` commands (`UIO_PRINTER_GET`).
 
+4. **Direct ASIC / Shared DDR3 Framebuffer Capture (Console Integrated Printers)**:
+   - Systems: **Casio Loopy** (`Loopy`).
+   - Mechanism: The console contains an integrated 3-pass thermal sticker printer driven by custom VDP ASIC registers (`$5D030-$5D044`). The core (`Loopy_MiSTer`) models the stepper motor and thermal pulses in RTL, reconstructs the 128x112 CMY image, and stores it in DDR3 SDRAM at physical address `0x3E400000` (56 KB buffer).
+   - MiSTer Fit: Directly mapped on HPS via `shmem_map(0x3E400000, 0x10000)` and converted to 24-bit RGB using the core's 512-entry CMY palette table, exported as PNG or printable PDF sticker sheets.
+
 ---
 
 ## 2. Complete Cores Catalog
 
 | Core | Home Folder | Native Printer Interface | Hardware Controller / Port | Standard / Target Printers | Emulation Protocol | Priority |
 | :--- | :--- | :--- | :--- | :--- | :--- | :---: |
+| **Casio Loopy** | `Loopy` | **Built-in Thermal** | Custom VDP ASIC (`$5D030-$5D044`) | Built-in Color Thermal Sticker Printer (XS-11/14/31) | Direct DDR3 Framebuffer (`0x3E400000`) | **Tier 1** |
 | **Apple II+/IIe** | `Apple-II` | **Serial** *(or Parallel)* | Slot 1 Super Serial Card (6551 ACIA) *(Grappler+ parallel was optional)* | Apple ImageWriter I/II, Serial Epson | ImageWriter, ESC/P | **Tier 1** |
 | **Apple IIgs** | `Apple-IIgs` | **Serial** | Built-in Port 1 (Z8530 SCC ch B) | Apple ImageWriter II (Color), ImageWriter LQ | ImageWriter | **Tier 1** |
 | **Apple Mac Plus / LC** | `MACPLUS`, `MacLC` | **Serial** | Built-in Printer Port (Z8530 SCC ch B) | ImageWriter I/II/LQ, LaserWriter | ImageWriter, PostScript | **Tier 1** |

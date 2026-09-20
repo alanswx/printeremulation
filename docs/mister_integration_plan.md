@@ -90,7 +90,19 @@ A standalone, lightweight C daemon compiled with the MiSTer ARM toolchain:
   - Implement `grappler_plus.v` in Slot 1.
   - Latch 6502 writes to `$C090` into a small BRAM FIFO.
   - Read bytes over SPI in `user_io_poll()` via `UIO_PRINTER_GET`.
-  - Enables simultaneous Slot 1 Grappler Parallel Printer + Slot 2 Modem!
+### 3.3 Casio Loopy Core (`Loopy_MiSTer`)
+* Current state:
+  - The core already emulates the thermal head DMA and 4-phase stepper motor in RTL.
+  - The 128x112 CMY sticker image is reconstructed in RTL and written to DDR3 at `0x3E400000` (`loopy_print_store.sv`, 56 KB buffer).
+  - The core displays an on-screen preview overlay, but cannot save to SD card.
+* **HPS Extraction Plan**:
+  1. Add OSD trigger button to `CONF_STR` in `Loopy.sv`:
+     `"P4T[12],Save sticker to SD;"`
+     and/or expose the `print_show` signal to `hps_io` for automatic saving upon print completion.
+  2. In `Main_MiSTer` (or `mister_printerd`):
+     - Map `0x3E400000` via `shmem_map(0x3E400000, 0x10000)`.
+     - Decode 3-bit CMY dot data into 24-bit RGB using the 512-entry palette LUT.
+     - Save as `/media/fat/printers/Loopy_YYYY-MM-DD_HH-MM-SS.png` or lay out into a multi-sticker PDF sheet.
 
 ---
 
@@ -99,6 +111,9 @@ A standalone, lightweight C daemon compiled with the MiSTer ARM toolchain:
 - [x] **PDF Generation Engine**: Verify `PDFGen` compiles cleanly without dependencies and produces valid multi-page PDF documents.
 - [x] **ImageWriter Protocol Verification**: Successfully parse 72/144 DPI graphics slices (`ESC G / ESC P`) and line spacing (`ESC T nn`) from real sample data.
 - [x] **Epson ESC/P Protocol Verification**: Successfully parse 8-pin graphics (`ESC K / ESC L / ESC Y / ESC Z`) and line spacing (`ESC 3 24`) into seamless raster pages.
-- [ ] **Cross-compilation**: Build `mister_printerd` with the arm-linux-gnueabihf toolchain for the DE10-Nano.
-- [ ] **Integration with MiSTer Main**: Add UART Mode 7 to `MainMess/menu.cpp` and test OSD controls.
-- [ ] **Live Print Test**: Boot The Print Shop on Apple IIe and Apple IIgs, print a greeting card and banner, and verify output PDF formatting and color fidelity.
+- [x] **Coleco Adam & Commodore MPS 803**: Verified daisy wheel and PETSCII 7-dot matrix parsers.
+- [x] **Cross-compilation**: Built `mister_printerd` (66 KB) with the `arm-none-linux-gnueabihf` toolchain for the DE10-Nano.
+- [x] **Integration with MiSTer Main**: Added UART Mode 7 to `Main_MiSTer` (`menu.cpp`, `user_io.cpp`, `Makefile`), built combined binary with Dani's Quadra 800 PR #1321, and pushed to `alanswx/Main_MiSTer`.
+- [x] **Casio Loopy Reverse Engineering**: Mapped the RTL DDR3 print buffer at `0x3E400000`, verified CMY 3-pass packing and palette decoding.
+- [ ] **Live Hardware Print Test**: Boot The Print Shop on Apple IIe and Apple IIgs, print a greeting card and banner, and verify output PDF formatting and color fidelity.
+- [ ] **Casio Loopy HPS Saver Implementation**: Wire `shmem_map(0x3E400000, 0x10000)` into `Main_MiSTer` and add OSD save trigger to `Loopy_MiSTer`.

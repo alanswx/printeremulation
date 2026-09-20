@@ -92,6 +92,17 @@ For parallel printers (Centronics / Grappler+ in Apple II Slot 1) or when the us
     ```
   - At 9600 baud equivalent, data rate is ~1 KB/sec. Draining the FIFO every frame (60 Hz) moves at most ~16 bytes per poll pass, requiring < 2 microseconds of SPI bus time!
 
+### 3.3 Channel 3: Shared DDR3 Framebuffer Extraction (Console Built-in Printers)
+For consoles with integrated hardware printers (such as the **Casio Loopy**):
+* **FPGA Side**:
+  - The core (`Loopy_MiSTer`) models the physical thermal head pulses and 4-phase stepper motor directly in RTL (`loopy_print_capture.sv`).
+  - Reconstructs the 128x112 CMY image and writes it directly to shared DDR3 SDRAM at physical base `0x3E400000` (`loopy_print_store.sv`, 56 KB buffer).
+  - Asserts `print_show` on completion.
+* **HPS Side**:
+  - Main_MiSTer maps physical address `0x3E400000` via `shmem_map(0x3E400000, 0x10000)`.
+  - Unpacks the 3-bit CMY dot data using the 512-entry palette LUT to 24-bit RGB.
+  - Directly outputs high-resolution PNG stickers and multi-sticker printable PDF sheets.
+
 ---
 
 ## 4. Printer Emulation Engines
@@ -122,6 +133,21 @@ For parallel printers (Centronics / Grappler+ in Apple II Slot 1) or when the us
     - `ESC A n`: Set line spacing to n/72-inch.
     - `ESC 2`: Reset to standard 1/6-inch line spacing.
   - **Text Formatting**: Bold (`ESC E`), Italic (`ESC 4`), Underline (`ESC - 1`), Pitch (`ESC P` 10cpi, `ESC M` 12cpi, `SI` condensed).
+
+### 4.3 Coleco Adam SmartWriter
+* **Target Core**: Coleco Adam (`Adam`).
+* **Hardware**: AdamNet Serial Bus (Device #04).
+* **Key Features**: Daisy wheel line printing with bidirectional buffering (`adamBidiBuffer`) to simulate physical carriage movements accurately.
+
+### 4.4 Commodore MPS 803
+* **Target Core**: Commodore 64 / 128 (`C64`, `C128`).
+* **Hardware**: Serial IEC Bus (Device #4).
+* **Key Features**: 7-dot matrix graphics (`CHR$(8)`), PETSCII character glyphs, and uncompressed graphics streaming.
+
+### 4.5 Casio Loopy Thermal Sticker Printer
+* **Target Core**: Casio Loopy (`Loopy`).
+* **Hardware**: Custom VDP ASIC registers (`0x5D030-0x5D044`).
+* **Key Features**: 3-pass subtractive CMY thermal transfer, 128x112 resolution, 56 KB DDR3 buffer at `0x3E400000`, exported as high-resolution PNG stickers and multi-sticker printable PDF sheets. See [docs/casio_loopy_printer.md](casio_loopy_printer.md) for full hardware specification.
 
 ---
 

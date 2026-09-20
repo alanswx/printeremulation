@@ -65,6 +65,7 @@ Before modifying or implementing printer parsers, inspect the corresponding refe
 * **ImageWriter Specifications**: [docs/imagewriter_reference.md](docs/imagewriter_reference.md)
 * **Epson ESC/P Specifications**: [docs/epson_escp_reference.md](docs/epson_escp_reference.md)
 * **Apple II Interface Hardware**: [docs/apple2_printer_interfaces.md](docs/apple2_printer_interfaces.md)
+* **Casio Loopy Printer**: [docs/casio_loopy_printer.md](docs/casio_loopy_printer.md)
 * **MiSTer Integration Plan**: [docs/mister_integration_plan.md](docs/mister_integration_plan.md)
 
 ### Reference Codebases:
