@@ -1,8 +1,15 @@
 # Build artifacts
 build/
 build_arm/
+*.o
+*.a
+bin/
+prototype/printer_to_pdf
 
-# Generated prints & previews
+# External reference repositories (cloned during initial research)
+references/
+
+# Generated prints & test previews
 printers/
 *.pdf
 *.png
@@ -11,3 +18,5 @@ tests/data/
 
 # OS artifacts
 .DS_Store
+*.swp
+*~

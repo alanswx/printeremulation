@@ -66,6 +66,25 @@ def gen_mps803():
     out += b"\x0c"
     return out
 
+def gen_escp_tps():
+    # Epson ESC/P 8-pin graphics (The Print Shop TPS mode):
+    out = bytearray()
+    out += b'\x1b@'       # ESC @: Initialize
+    out += b'\x1b3\x18'   # ESC 3 24: 24/216" line spacing
+    width = 300
+    nL = width & 0xFF
+    nH = (width >> 8) & 0xFF
+    for band in range(10):
+        out += b'\x1bK' + bytes([nL, nH])
+        for x in range(width):
+            val = 0xAA if ((x // 10) % 2 == (band % 2)) else 0x55
+            if band == 0: val |= 0x80
+            if band == 9: val |= 0x01
+            out.append(val)
+        out += b'\r\n'
+    out += b'\x0c'
+    return out
+
 def main():
     os.makedirs("tests/data", exist_ok=True)
     
@@ -80,6 +99,10 @@ def main():
     mps_data = gen_mps803()
     with open("tests/data/test_mps803.prn", "wb") as f:
         f.write(mps_data)
+
+    escp_data = gen_escp_tps()
+    with open("tests/data/test_escp.prn", "wb") as f:
+        f.write(escp_data)
         
     print("Generated test streams in tests/data/")
 

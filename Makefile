@@ -1,19 +1,12 @@
 CC ?= gcc
-CFLAGS ?= -O2 -Wall -Wextra -Ireferences/PDFGen -Isrc
+CFLAGS ?= -O2 -Wall -Wextra -Wno-format -Isrc
 LDFLAGS ?= -lm
 
 # Check for ARM cross compiler on host, otherwise fallback to Docker container
 ARM_CC_EXISTS := $(shell which $(ARM_CC) 2>/dev/null)
 DOCKER_IMAGE ?= mrext/armbuild:latest
 
-SRCS = src/mister_printerd.c \
-       src/canvas.c \
-       src/pdf_writer.c \
-       src/parser_imagewriter.c \
-       src/parser_escp.c \
-       src/parser_adam.c \
-       src/parser_mps803.c \
-       references/PDFGen/pdfgen.c
+SRCS = $(wildcard src/*.c)
 
 TARGET = build/mister_printerd
 ARM_TARGET = build/mister_printerd.arm
@@ -21,7 +14,7 @@ ARM_TARGET = build/mister_printerd.arm
 all: $(TARGET)
 
 $(TARGET): $(SRCS)
-	@mkdir -p build/src build/references/PDFGen
+	@mkdir -p build
 	$(CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(TARGET)
 	@echo "Built host binary: $(TARGET)"
 
@@ -47,13 +40,12 @@ test: $(TARGET)
 	@mkdir -p printers tests/data
 	@echo "1. Generating test streams..."
 	python3 tests/generate_test_streams.py
-	python3 prototype/gen_escp_test.py
 	@echo "2. Testing ImageWriter with raw Print Shop dump..."
-	$(TARGET) -d references/ImageWriter/Printer.txt -m imagewriter -t 1 -v
+	$(TARGET) -d tests/samples/imagewriter_printshop.txt -m imagewriter -t 1 -v
 	@echo "3. Testing ImageWriter II Color..."
 	$(TARGET) -d tests/data/test_imagewriter_color.prn -m imagewriter -t 1 -v
 	@echo "4. Testing Epson ESC/P (Print Shop TPS mode)..."
-	$(TARGET) -d test_escp.prn -m epson-tps -t 1 -v
+	$(TARGET) -d tests/data/test_escp.prn -m epson-tps -t 1 -v
 	@echo "5. Testing Coleco Adam SmartWriter..."
 	$(TARGET) -d tests/data/test_adam.prn -m adam -t 1 -v
 	@echo "6. Testing Commodore MPS 803..."

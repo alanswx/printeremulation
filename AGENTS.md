@@ -43,7 +43,7 @@ The goal of this project is to provide authentic retro printer emulation across 
 The ARM HPS runs a stripped-down embedded Linux environment on the DE10-Nano:
 1. **Zero External Runtime Dependencies**:
    - **DO NOT** depend on Ghostscript (`ps2pdf`), CUPS, ImageMagick, Python, or external shared libraries not already present on MiSTer Linux.
-   - **DO** use single-file, self-contained libraries like **[PDFGen](references/PDFGen/pdfgen.h)** or FujiNet's streaming PDF generator.
+   - **DO** use single-file, self-contained libraries like **[PDFGen](src/pdfgen.h)** or FujiNet's streaming PDF generator.
 2. **Memory Footprint**:
    - Although the DE10-Nano has 1 GB of RAM, the printer daemon should remain lightweight (< 10 MB total RAM during active rasterization).
    - Standard 144 DPI 24-bit RGB page canvas is `1224 x 1584 x 3` bytes $\approx 5.8\text{ MB}$.
