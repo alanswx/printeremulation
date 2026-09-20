@@ -1,0 +1,58 @@
+diff --git a/Apple-II.sv b/Apple-II.sv
+index a123456..b789012 100644
+--- a/Apple-II.sv
++++ b/Apple-II.sv
+@@ -223,6 +223,7 @@ parameter CONF_STR = {
+ 	"OM,PAL Mode,NTSC,PAL;",
+ 	"ON,Video Rom,US,LOCAL;",
+ 	"-;",
++	"OS,Serial Card,Slot 2 (Modem),Slot 1 (Printer);",
+ 	"O6,Analog X/Y,Normal,Swapped;",
+ 	"OHI,Paddle as analog,No,X,Y;",
+ 	"-;",
+@@ -377,6 +378,8 @@ apple2_top apple2_top
+ 	.CLK_50M(CLK_50M),
+ 	.CLK_14M(CLK_14M),
+ 	.CLK_2M(clk_sys),
++	.ssc_slot1((uart_mode == 8'd7) | status[28]),
+ 
+ 	.FLASH_RAM_ADDR(sd_buff_addr),
+ 	.FLASH_RAM_DO(sd_buff_din[0]),
+diff --git a/rtl/apple2_top.v b/rtl/apple2_top.v
+index c123456..d789012 100644
+--- a/rtl/apple2_top.v
++++ b/rtl/apple2_top.v
+@@ -109,6 +109,7 @@ module apple2_top(
+     UART_CTS,
+     UART_DTR,
+     UART_DSR,
++    ssc_slot1,
+     RTC
+ );
+ 
+@@ -222,6 +223,7 @@ module apple2_top(
+     output        UART_DTR;
+     input         UART_DSR;
++    input         ssc_slot1;
+     input  [64:0] RTC;
+ 
++    wire [2:0] ssc_slot = ssc_slot1 ? 3'd1 : 3'd2;
+ 
+@@ -393,7 +395,7 @@ module apple2_top(
+                 (IO_SELECT[4] == 1'b1 | DEVICE_SELECT[4] == 1'b1)                                   ? MOUSE_4_DO :
+                 (IO_SELECT[3] == 1'b1 | DEVICE_SELECT[3] == 1'b1)                                   ? DISK2_DO :
+-                (IO_SELECT[2] == 1'b1 | DEVICE_SELECT[2] == 1'b1 | SSC_ROM_EN == 1'b1)            ? SSC_DO :
++                (IO_SELECT[ssc_slot] == 1'b1 | DEVICE_SELECT[ssc_slot] == 1'b1 | SSC_ROM_EN == 1'b1)? SSC_DO :
+                 (IO_SELECT[7] == 1'b1 | DEVICE_SELECT[7] == 1'b1)                                   ? HDD_DO :
+                 8'b0;
+ 
+@@ -674,8 +676,8 @@ module apple2_top(
+         .CLK_2M(CLK_2M),
+         .PH_2(PHASE_ZERO),
+-        .IO_SELECT_N(~IO_SELECT[2]),
+-        .DEVICE_SELECT_N(~DEVICE_SELECT[2]),
++        .IO_SELECT_N(~IO_SELECT[ssc_slot]),
++        .DEVICE_SELECT_N(~DEVICE_SELECT[ssc_slot]),
+         .IO_STROBE_N(~IO_STROBE),
+         .ADDRESS(ADDR),
+         .RW_N(~cpu_we),

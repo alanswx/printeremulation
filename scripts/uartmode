@@ -1,0 +1,92 @@
+#!/bin/sh
+# /sbin/uartmode helper for MiSTer FPGA Retro Printer Daemon
+# Handles mode 7: "Printer"
+
+MODE="$1"
+
+# Kill any existing UART services when changing modes
+killall -9 pppd midilink mister_printerd snid 2>/dev/null
+rm -f /tmp/uartmode*
+
+case "$MODE" in
+    0)
+        # None
+        echo "UART disabled."
+        ;;
+    1)
+        touch /tmp/uartmode1
+        # PPP
+        ;;
+    2)
+        touch /tmp/uartmode2
+        # Linux Serial Console
+        ;;
+    3)
+        touch /tmp/uartmode3
+        # MIDI
+        ;;
+    4)
+        touch /tmp/uartmode4
+        # Modem emulation
+        ;;
+    5)
+        touch /tmp/uartmode5
+        # UDP Link
+        ;;
+    6)
+        touch /tmp/uartmode6
+        # SNI
+        ;;
+    7)
+        # Retro Printer Emulation
+        touch /tmp/uartmode7
+
+        # Detect active core
+        CORE=""
+        [ -f /tmp/CORENAME ] && CORE=$(cat /tmp/CORENAME)
+
+        # Detect baud rate (written by user_io)
+        BAUD=9600
+        [ -f /tmp/UART_SPEED ] && BAUD=$(cat /tmp/UART_SPEED)
+
+        # Match appropriate printer model based on active core
+        MODEL="imagewriter"
+        case "$CORE" in
+            Apple-II*|apple2*|iigs*)
+                MODEL="imagewriter"
+                ;;
+            ColecoAdam*)
+                MODEL="adam"
+                ;;
+            C64*|VIC20*|PET2001*|C16*|Plus4*)
+                MODEL="mps803"
+                ;;
+            ao486*|Amiga*|AtariST*|MSX*|PC88*|PC98*|X68000*|Archie*)
+                MODEL="epson-tps"
+                ;;
+            *)
+                MODEL="epson-tps"
+                ;;
+        esac
+
+        # Ensure output directory exists on SD card
+        mkdir -p /media/fat/printers
+
+        # Check for daemon binary
+        PRINTERD="/media/fat/mister_printerd"
+        if [ ! -x "$PRINTERD" ]; then
+            PRINTERD="/usr/local/bin/mister_printerd"
+        fi
+
+        if [ -x "$PRINTERD" ]; then
+            echo "[uartmode] Launching mister_printerd for core '$CORE' (model: $MODEL, baud: $BAUD)..."
+            "$PRINTERD" -d /dev/ttyS1 -m "$MODEL" -b "$BAUD" -o /media/fat/printers -B
+        else
+            echo "[uartmode] Error: mister_printerd not found at /media/fat/mister_printerd or /usr/local/bin/"
+        fi
+        ;;
+    *)
+        echo "Usage: $0 <0-7>"
+        exit 1
+        ;;
+esac

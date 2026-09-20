@@ -1,0 +1,24 @@
+diff --git a/menu.cpp b/menu.cpp
+index 28e8bf0..3a9f012 100644
+--- a/menu.cpp
++++ b/menu.cpp
+@@ -263,7 +263,7 @@ const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "B
+ const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
+ const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
+-const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI"};
++const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer"};
+ const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----", "-----", "  USB" };
+ const char *config_afilter_msg[] = { "Internal","Custom" };
+ const char *config_smask_msg[] = { "None", "1x", "2x", "1x Rotated", "2x Rotated" };
+diff --git a/user_io.cpp b/user_io.cpp
+index 8f29402..6741bcf 100644
+--- a/user_io.cpp
++++ b/user_io.cpp
+@@ -1178,6 +1178,7 @@ int GetUARTMode()
+ 	if (!stat("/tmp/uartmode4", &filestat)) return 4;
+ 	if (!stat("/tmp/uartmode5", &filestat)) return 5;
+ 	if (!stat("/tmp/uartmode6", &filestat)) return 6;
++	if (!stat("/tmp/uartmode7", &filestat)) return 7;
+ 	return 0;
+ }
+ 

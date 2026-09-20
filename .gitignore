@@ -1,0 +1,13 @@
+# Build artifacts
+build/
+build_arm/
+
+# Generated prints & previews
+printers/
+*.pdf
+*.png
+*.prn
+tests/data/
+
+# OS artifacts
+.DS_Store
