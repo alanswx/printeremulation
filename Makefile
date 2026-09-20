@@ -2,7 +2,9 @@ CC ?= gcc
 CFLAGS ?= -O2 -Wall -Wextra -Ireferences/PDFGen -Isrc
 LDFLAGS ?= -lm
 
-ARM_CC ?= arm-linux-gnueabihf-gcc
+# Check for ARM cross compiler on host, otherwise fallback to Docker container
+ARM_CC_EXISTS := $(shell which $(ARM_CC) 2>/dev/null)
+DOCKER_IMAGE ?= mrext/armbuild:latest
 
 SRCS = src/mister_printerd.c \
        src/canvas.c \
@@ -12,9 +14,6 @@ SRCS = src/mister_printerd.c \
        src/parser_adam.c \
        src/parser_mps803.c \
        references/PDFGen/pdfgen.c
-
-OBJS = $(patsubst %.c,build/%.o,$(SRCS))
-ARM_OBJS = $(patsubst %.c,build_arm/%.o,$(SRCS))
 
 TARGET = build/mister_printerd
 ARM_TARGET = build/mister_printerd.arm
@@ -27,9 +26,22 @@ $(TARGET): $(SRCS)
 	@echo "Built host binary: $(TARGET)"
 
 arm:
-	@mkdir -p build_arm/src build_arm/references/PDFGen
-	$(ARM_CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET)
-	@echo "Built ARM binary: $(ARM_TARGET)"
+	@mkdir -p build
+	@if [ -n "$(ARM_CC_EXISTS)" ]; then \
+		echo "Building with host $(ARM_CC)..."; \
+		$(ARM_CC) $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET); \
+		arm-linux-gnueabihf-strip $(ARM_TARGET); \
+	else \
+		echo "Host ARM cross compiler not found, building with Docker ($(DOCKER_IMAGE))..."; \
+		docker run --rm -v "$$(pwd)":/work -w /work $(DOCKER_IMAGE) sh -c \
+			"arm-linux-gnueabihf-gcc $(CFLAGS) $(SRCS) $(LDFLAGS) -o $(ARM_TARGET) && arm-linux-gnueabihf-strip $(ARM_TARGET)"; \
+	fi
+	@echo "Built and stripped ARM binary: $(ARM_TARGET)"
+
+deploy: arm
+	scp $(ARM_TARGET) root@mister.local:/media/fat/mister_printerd
+	ssh root@mister.local "chmod +x /media/fat/mister_printerd && mkdir -p /media/fat/printers"
+	@echo "Successfully deployed to root@mister.local:/media/fat/mister_printerd"
 
 test: $(TARGET)
 	@mkdir -p printers tests/data
