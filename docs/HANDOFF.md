@@ -1,9 +1,10 @@
 # MiSTer Retro Printer Emulation: Project Handoff & Status
 
-**Generated**: September 20, 2026  
+**Updated**: September 22, 2026  
 **Repositories**:
 * Standalone Daemon & Specs: [`/Users/alans/dev2/printeremulation`](https://github.com/alanswx/printeremulation)
 * MiSTer Main Fork: [`/Users/alans/dev2/MainMess`](https://github.com/alanswx/Main_MiSTer)
+* Apple IIgs Core: [`/Users/alans/dev2/Apple-IIgs_MiSTer`](https://github.com/MiSTer-devel/Apple-IIgs_MiSTer)
 * Casio Loopy Core: [`/Users/alans/dev2/Loopy_MiSTer`](https://github.com/MiSTer-devel/Loopy_MiSTer)
 * Target Hardware: `root@mister.local` (Cyclone V ARMv7 Linux 5.15.1)
 
@@ -20,92 +21,75 @@ The system supports three distinct transport channels:
 
 ---
 
-## 2. Current Implementation Status
+## 2. Major Milestone: Live Hardware Verification (Apple IIgs)
+
+The Apple IIgs core has been **fully verified end-to-end on live MiSTer hardware** using Broderbund's *The Print Shop* configured for an Apple ImageWriter II with 4-color ribbon.
+
+### Verified Print Runs (Archived in `debug_archive/`):
+1. **"GO TEAM!" 4-Page Continuous Banner**:
+   - **Stream Size**: 1,088,153 bytes captured over UART at 9600 baud with **0 framing errors**.
+   - **Raw Stream Capture**: `debug_archive/PrintShop_Color_Raw_1.08MB.bin`
+   - **PDF Output**: [`debug_archive/Print_2026-09-22_23-09-44.pdf`](../debug_archive/Print_2026-09-22_23-09-44.pdf) (4.28 MB, 4 pages).
+   - **Rendered PNGs**: [`debug_archive/pages/`](../debug_archive/pages/) (`banner-1.png` through `banner-4.png`).
+   - Features: Full-color soccer ball, yellow lightning bolts, red burst, blue clouds, decorative side borders, seamless inter-page lettering.
+
+---
+
+## 3. Parser & Daemon Breakthroughs
+
+During testing on real hardware, several key fixes were developed and deployed into [`src/parser_imagewriter.c`](../src/parser_imagewriter.c) and [`src/printer.h`](../src/printer.h):
+
+1. **Exact 120 DPI Integer Column Alignment**:
+   ImageWriter graphics lines often use 120 DPI units (`ESC S 0960`), which caused cumulative rounding errors when placed onto a 144 DPI canvas. The parser now computes absolute column positions with pure integer math:
+   ```c
+   int col_x    = margin_left + (int)(((long)(iw.start_col + iw.g_cols_read) * c->dpi) / unit);
+   int col_next = margin_left + (int)(((long)(iw.start_col + iw.g_cols_read + 1) * c->dpi) / unit);
+   int dot_w    = col_next - col_x;
+   ```
+   This guarantees that color ribbon passes (Yellow, Cyan, Magenta, Black) overlap with single-dot precision.
+2. **Super Serial Card Initialization Filtering**:
+   The SSC firmware sends `<Ctrl-I> Z` (reset) and `<Ctrl-I> 80N` (disable line wrap / auto LF). The parser implements a dedicated state machine (`IW_STATE_TAB`, `IW_STATE_TAB_NUM`) to silently swallow these commands without misinterpreting them as text.
+3. **Paper Motion Enhancements**:
+   Implemented `ESC F nnnn` (absolute horizontal position), `ESC f` (forward half-line feed, 1/12"), and `ESC r` (reverse line feed, 1/6").
+4. **Adaptive Timeout**:
+   Increased `DEFAULT_TIMEOUT_SEC` in [`src/printer.h`](../src/printer.h) to 12 seconds so 65816 CPU rasterization pauses do not trigger premature page commits.
+
+---
+
+## 4. Current Implementation Status
 
 ### A. Standalone Printer Daemon (`mister_printerd`)
 * **Location**: `src/` in [alanswx/printeremulation](https://github.com/alanswx/printeremulation)
-* **Status**: Complete, fully tested, zero external runtime dependencies.
-* **Size**: ~66 KB compiled & stripped ELF ARM binary.
-* **Engines Implemented**:
-  * **Apple ImageWriter I/II**: 72 & 144 DPI graphics slices (`ESC G`, `ESC P`, `ESC S`), 4-color ribbons (`ESC K <0..6>`), and variable line spacing (`ESC T nn`).
-  * **Epson ESC/P**: 9-pin / 24-pin bit-image modes (`ESC K/L/Y/Z`), GrafTrax graphics, and seamless 1-line top offset compensation (`epsonTPS`) for Broderbund's *The Print Shop*.
-  * **Coleco Adam SmartWriter**: Bidirectional daisy wheel line printing simulation (`adamBidiBuffer`).
-  * **Commodore MPS 803**: PETSCII character glyphs and 7-dot matrix graphics (`CHR$(8)`).
-  * **PDF Engine**: Vendored single-file ANSI C [PDFGen](src/pdfgen.h), multi-page document generation, auto-timestamping (`Print_YYYY-MM-DD_HH-MM-SS.pdf`), and 4-second inactivity auto-flush.
-* **Test Suite**: 6-test automated matrix (`make test`) passes cleanly on both host and ARM.
+* **Status**: Complete, production-ready, verified on hardware, zero external dependencies.
+* **Size**: ~66 KB stripped ARM ELF binary.
+* **Live Deployment**: Active on `mister.local` (`/media/fat/mister_printerd`).
 
 ### B. MiSTer Main Binary Integration
 * **Location**: [alanswx/Main_MiSTer](https://github.com/alanswx/Main_MiSTer)
-* **Branches**:
-  * `master`: Upstream (`5b3ae64`) + Dani's PR #1321 (Quadra 800 SCSI/Ethernet) + Printer UART Mode.
-  * `q800-printer`: Same integrated build as `master`.
-  * `printer-support`: Isolated printer patch on top of upstream (clean for PR to `MiSTer-devel`).
-* **Main Changes**:
-  * `menu.cpp`: Added `"   Printer"` to `config_uart_msg` (Mode 7).
-  * `user_io.cpp`: Added `/tmp/uartmode7` detection in `GetUARTMode()`.
-  * `Makefile`: Added `mister_printerd` build rule and multi-target compilation.
-  * `support/printer/`: Embedded full daemon and parsers.
-* **Hardware Deployment on `mister.local`**:
-  * Staged Main binary: `/media/fat/MiSTer_quadra_printer` (1.2 MB).
-  * Installed daemon: `/media/fat/mister_printerd` (66 KB).
-  * Patched script: `/sbin/uartmode` supports Mode 7 (`Printer`) with core autodetection (backup at `/sbin/uartmode.bak`).
+* **Features**: Added UART Mode 7 (`Printer`) to OSD menu, `/sbin/uartmode` script automation, and embedded daemon support.
+* **Hardware Deployment**: Staged at `/media/fat/MiSTer_quadra_printer` on `mister.local`.
 
-### C. Casio Loopy Thermal Sticker Printer (Discovery & Specification)
+### C. Apple IIgs Core RTL Routing
+* **Location**: [Apple-IIgs_MiSTer](https://github.com/MiSTer-devel/Apple-IIgs_MiSTer)
+* **Status**: Hardware UART connects to Z8530 SCC Channel B (`scc_txd_b`, Slot 1 / Printer) and Channel A (`scc_txd_a`, Slot 2 / Modem). Verified streaming at 9600 baud with 0 framing errors.
+
+### D. Casio Loopy Thermal Sticker Printer
 * **Location**: [`Loopy_MiSTer`](https://github.com/MiSTer-devel/Loopy_MiSTer) & [`docs/casio_loopy_printer.md`](casio_loopy_printer.md)
-* **Discovery**: The `Loopy_MiSTer` core (by Jamie Blanks) **already emulates the thermal head DMA and stepper motor in RTL**, reconstructs the 128×112 CMY image, and stores it in DDR3 SDRAM at physical address **`0x3E400000`** (56 KB buffer).
-* **Missing Link**: The core displays an on-screen preview, but has no mechanism to dump this buffer to SD card.
-* **Plan Complete**: Documented memory layout, 512-entry CMY-to-RGB palette table, and HPS `shmem_map` extraction routine in [`docs/casio_loopy_printer.md`](casio_loopy_printer.md).
+* **Status**: Reverse-engineered RTL buffer at `0x3E400000` (128×112 CMY, 56 KB) and 512-entry palette table. Ready for HPS extractor tool.
 
 ---
 
-## 3. Next Action Items for Pair Programmer / Agent
+## 5. Next Action Items for Pair Programmer / Agent
 
-### Action 1: Apple IIgs Core RTL Routing (Serial Printer Port)
-1. **Target**: `Apple-IIgs_MiSTer` (`rtl/iigs.sv`).
-2. **Task**: Route Z8530 SCC Channel B (Port 1, Printer) to `UART_*` when `uart_mode == 8'd7`:
-   ```verilog
-   wire uart_is_printer = (uart_mode == 8'd7);
-   assign UART_TXD = uart_is_printer ? scc_printer_txd : scc_modem_txd;
-   assign UART_RTS = uart_is_printer ? scc_printer_rts : scc_modem_rts;
-   assign UART_DTR = uart_is_printer ? scc_printer_dtr : scc_modem_dtr;
-   assign scc_printer_rxd = uart_is_printer ? UART_RXD : 1'b1;
-   assign scc_printer_cts = uart_is_printer ? UART_CTS : 1'b0;
-   assign scc_modem_rxd   = uart_is_printer ? 1'b1 : UART_RXD;
-   assign scc_modem_cts   = uart_is_printer ? 1'b0 : UART_CTS;
-   ```
-3. **Reference Patch**: See [`patches/apple2_slot1_printer.patch`](../patches/apple2_slot1_printer.patch).
-
-### Action 2: Apple IIe Core RTL Routing (Slot 1 Super Serial Card)
+### Action 1: Apple IIe Core RTL Routing (Slot 1 Super Serial Card)
 1. **Target**: `Apple-II_MiSTer` (`rtl/apple2.v` / `Apple-II.sv`).
-2. **Task**: Connect Super Serial Card in Slot 1 to `UART_*` pins when UART mode is `Printer`.
+2. **Task**: Apply [`patches/apple2_slot1_printer.patch`](../patches/apple2_slot1_printer.patch) to route Slot 1 SSC to `UART_*` when UART mode is `Printer`.
+3. **Test**: Run Apple IIe version of *The Print Shop* or *AppleWorks*.
 
-### Action 3: Live Print Shop Benchmark on MiSTer
-1. Launch Apple IIe or Apple IIgs on `mister.local`.
-2. In the OSD menu: Set `UART Mode: Printer`.
-3. Boot Broderbund's *The Print Shop* (or *The Print Shop IIGS*).
-4. Configure printer: Apple ImageWriter (or Epson FX-80).
-5. Print a greeting card or banner.
-6. Verify output: Check `/media/fat/printers/Print_YYYY-MM-DD_HH-MM-SS.pdf` for:
-   - Proper dot alignment with zero horizontal or vertical slice seams.
-   - Accurate 4-color ribbon reproduction (ImageWriter II).
-   - Clean page margins.
+### Action 2: Casio Loopy DDR3 Sticker Saver
+1. In `Main_MiSTer`: Implement `loopy_save_sticker()` using `shmem_map(0x3E400000, 0x10000)`.
+2. Save raw sticker buffer to `/media/fat/printers/Loopy_YYYY-MM-DD_HH-MM-SS.png` or PDF.
 
-### Action 4: Casio Loopy DDR3 Sticker Saver
-1. In `Main_MiSTer`: Add `loopy_save_sticker()` using `shmem_map(0x3E400000, 0x10000)`.
-2. In `Loopy_MiSTer`: Add OSD trigger button (`P4T[12],Save sticker to SD;`) in `CONF_STR` of `Loopy.sv`.
-3. Output sticker images to `/media/fat/printers/Loopy_YYYY-MM-DD_HH-MM-SS.png` or lay out into printable multi-sticker PDF sheets.
-
----
-
-## 4. Key Reference Files & Addresses
-
-| Asset | Location / Address | Notes |
-|---|---|---|
-| **Daemon Source** | `printeremulation/src/` | Portable C99, builds standalone |
-| **MiSTer Main Fork** | `MainMess/` (`alanswx/Main_MiSTer`) | Branches: `master`, `q800-printer`, `printer-support` |
-| **MiSTer Staged Executable** | `/media/fat/MiSTer_quadra_printer` | 1.2 MB, includes Q800 + Printer |
-| **MiSTer Daemon Executable** | `/media/fat/mister_printerd` | 66 KB, stripped ARM ELF |
-| **MiSTer UART Script** | `/sbin/uartmode` | Handles mode `7` -> spawns `mister_printerd` |
-| **Loopy DDR3 Buffer** | Physical address `0x3E400000` | 128×112 CMY pixels, 56 KB total |
-| **Loopy Palette Table** | `Loopy_MiSTer/rtl/loopy_print_palette.sv` | 512-entry CMY `{c[2:0], m[2:0], y[2:0]}` -> RGB555 |
-| **Output Directory** | `/media/fat/printers/` | Auto-created on first print |
+### Action 3: BRAM Centronics FIFO for Parallel Cores
+1. Implement `virtual_centronics.v` dual-clock FIFO for `ao486` (LPT1), `Amiga`, and `PC-88`.
+2. Drain via SPI `user_io` (`UIO_PRINTER_GET`).

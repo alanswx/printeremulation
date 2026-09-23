@@ -19,10 +19,13 @@ static const RGBColor IW_COLORS[8] = {
 
 typedef enum {
     IW_STATE_TEXT,
+    IW_STATE_TAB,
+    IW_STATE_TAB_NUM,
     IW_STATE_ESC,
     IW_STATE_LINE_PITCH_1,
     IW_STATE_LINE_PITCH_2,
     IW_STATE_COLOR,
+    IW_STATE_HORIZ_POS,
     IW_STATE_GRAPHICS_LEN,
     IW_STATE_GRAPHICS_DATA
 } IWState;
@@ -36,6 +39,7 @@ static struct {
     int g_len_idx;
     int pitch_val;
     int dpi_mode;
+    int start_col;
 } iw;
 
 void parser_imagewriter_init(JobState *job) {
@@ -45,6 +49,7 @@ void parser_imagewriter_init(JobState *job) {
     iw.g_cols_read = 0;
     iw.g_len_idx = 0;
     iw.dpi_mode = 72;
+    iw.start_col = 0;
     job->canvas.line_spacing = (job->canvas.dpi * 24) / 144; // 24/144" = 1/6"
     job->canvas.cur_color = IW_COLORS[0];
 }
@@ -72,6 +77,16 @@ static void draw_char(Canvas *c, char ch) {
     c->head_x += 6 * scale; // 5 dots + 1 dot space
 }
 
+static void advance_tab(Canvas *c) {
+    int scale = (c->dpi >= 144) ? (c->dpi / 72) : 1;
+    int char_width = 6 * scale;
+    int tab_width = char_width * 8; // standard 8-character tab stop
+    int margin_left = (int)(0.5f * c->dpi);
+    int rel_x = c->head_x - margin_left;
+    if (rel_x < 0) rel_x = 0;
+    c->head_x = margin_left + ((rel_x / tab_width) + 1) * tab_width;
+}
+
 void parser_imagewriter_byte(JobState *job, uint8_t byte) {
     Canvas *c = &job->canvas;
     int margin_left = (int)(0.5f * c->dpi);
@@ -81,10 +96,15 @@ void parser_imagewriter_byte(JobState *job, uint8_t byte) {
         case IW_STATE_TEXT:
             if (byte == 0x1B) { // ESC
                 iw.state = IW_STATE_ESC;
+            } else if (byte == 0x09) { // HT / Ctrl-I (Tab or Super Serial Card command)
+                iw.state = IW_STATE_TAB;
             } else if (byte == 0x0D) { // CR
                 c->head_x = margin_left;
+                iw.start_col = 0;
             } else if (byte == 0x0A) { // LF
                 c->head_y += c->line_spacing;
+                c->head_x = margin_left;
+                iw.start_col = 0;
                 if (c->head_y >= margin_bottom) {
                     job_commit_page(job);
                 }
@@ -95,11 +115,54 @@ void parser_imagewriter_byte(JobState *job, uint8_t byte) {
             }
             break;
 
+        case IW_STATE_TAB:
+            if (byte == 'Z' || byte == 'z') {
+                // Super Serial Card reset: <Ctrl-I> Z -> swallow
+                iw.state = IW_STATE_TEXT;
+            } else if (byte == 'N' || byte == 'n') {
+                // Super Serial Card line length/no LF: <Ctrl-I> N -> swallow
+                iw.state = IW_STATE_TEXT;
+            } else if (isdigit(byte)) {
+                // Super Serial Card parameter: <Ctrl-I> 80N or 0N
+                iw.state = IW_STATE_TAB_NUM;
+            } else {
+                // Not an SSC card command -> treat as real Tab
+                advance_tab(c);
+                iw.state = IW_STATE_TEXT;
+                parser_imagewriter_byte(job, byte);
+            }
+            break;
+
+        case IW_STATE_TAB_NUM:
+            if (isdigit(byte)) {
+                // Continue consuming digits (e.g. "80", "132")
+            } else if (byte == 'N' || byte == 'n') {
+                // End of SSC command: <Ctrl-I> 80N -> swallow
+                iw.state = IW_STATE_TEXT;
+            } else {
+                // Unrecognized sequence after digits -> advance tab and re-process byte
+                advance_tab(c);
+                iw.state = IW_STATE_TEXT;
+                parser_imagewriter_byte(job, byte);
+            }
+            break;
+
         case IW_STATE_ESC:
             if (byte == 'T') {
                 iw.state = IW_STATE_LINE_PITCH_1;
             } else if (byte == 'K') {
                 iw.state = IW_STATE_COLOR;
+            } else if (byte == 'F') { // Absolute horizontal position: ESC F nnnn
+                iw.g_len_idx = 0;
+                iw.state = IW_STATE_HORIZ_POS;
+            } else if (byte == 'f') { // Forward half-line feed (1/12")
+                c->head_y += c->line_spacing / 2;
+                iw.state = IW_STATE_TEXT;
+            } else if (byte == 'r') { // Reverse line feed (1/6")
+                c->head_y -= c->line_spacing;
+                int margin_top = (int)(0.5f * c->dpi);
+                if (c->head_y < margin_top) c->head_y = margin_top;
+                iw.state = IW_STATE_TEXT;
             } else if (byte == 'G' || byte == 'S' || byte == 'g') {
                 iw.g_cmd = (char)byte;
                 iw.g_len_idx = 0;
@@ -170,6 +233,24 @@ void parser_imagewriter_byte(JobState *job, uint8_t byte) {
             break;
         }
 
+        case IW_STATE_HORIZ_POS: {
+            char ch = (char)byte;
+            if (ch == ' ') ch = '0';
+            if (isdigit((unsigned char)ch)) {
+                iw.g_len_str[iw.g_len_idx++] = ch;
+                if (iw.g_len_idx == 4) {
+                    iw.g_len_str[4] = '\0';
+                    iw.start_col = atoi(iw.g_len_str);
+                    int unit = (iw.dpi_mode > 0) ? iw.dpi_mode : 72;
+                    c->head_x = margin_left + (int)(((long)iw.start_col * c->dpi) / unit);
+                    iw.state = IW_STATE_TEXT;
+                }
+            } else {
+                iw.state = IW_STATE_TEXT;
+            }
+            break;
+        }
+
         case IW_STATE_GRAPHICS_LEN: {
             char ch = (char)byte;
             if (ch == ' ') ch = '0';
@@ -193,23 +274,27 @@ void parser_imagewriter_byte(JobState *job, uint8_t byte) {
         }
 
         case IW_STATE_GRAPHICS_DATA: {
-            int scale_x = (iw.g_cmd == 'S' || iw.dpi_mode >= 144) ? (c->dpi / 144) : (c->dpi / 72);
+            int unit = (iw.dpi_mode > 0) ? iw.dpi_mode : 72;
             int v_scale = c->dpi / 72; // 72 DPI vertical pin spacing = 2 px at 144 DPI
-            if (scale_x < 1) scale_x = 1;
             if (v_scale < 1) v_scale = 1;
+
+            int col_x = margin_left + (int)(((long)(iw.start_col + iw.g_cols_read) * c->dpi) / unit);
+            int col_next = margin_left + (int)(((long)(iw.start_col + iw.g_cols_read + 1) * c->dpi) / unit);
+            int dot_w = col_next - col_x;
+            if (dot_w < 1) dot_w = 1;
 
             // Bit 0 is top dot (Pin 1), Bit 7 is bottom dot (Pin 8)
             for (int pin = 0; pin < 8; pin++) {
                 if (byte & (1 << pin)) {
                     int py = c->head_y + (pin * v_scale);
-                    for (int dx = 0; dx < scale_x; dx++) {
+                    for (int dx = 0; dx < dot_w; dx++) {
                         for (int dy = 0; dy < v_scale; dy++) {
-                            canvas_plot_dot(c, c->head_x + dx, py + dy, c->cur_color);
+                            canvas_plot_dot(c, col_x + dx, py + dy, c->cur_color);
                         }
                     }
                 }
             }
-            c->head_x += scale_x;
+            c->head_x = col_next;
             iw.g_cols_read++;
 
             if (iw.g_cols_read >= iw.g_cols_expected) {

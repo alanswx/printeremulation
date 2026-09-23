@@ -129,17 +129,12 @@ elif [ "$1" == "7" ]; then
 		echo "1" >/tmp/uartmode7
 		CORE=""
 		[ -f /tmp/CORENAME ] && CORE=$(cat /tmp/CORENAME)
-		MODEL="imagewriter"
-		case "$CORE" in
-			Apple-II*|apple2*|iigs*) MODEL="imagewriter" ;;
-			ColecoAdam*) MODEL="adam" ;;
-			C64*|VIC20*|PET2001*|C16*|Plus4*) MODEL="mps803" ;;
-			*) MODEL="epson-tps" ;;
-		esac
+		PRINTER_MODEL="auto"
+		[ -f /tmp/PRINTER_MODEL ] && PRINTER_MODEL=$(cat /tmp/PRINTER_MODEL)
 		(
 			while true
 			do
-				/media/fat/mister_printerd -d /dev/ttyS1 -b $conn_speed -m $MODEL -o /media/fat/printers
+				/media/fat/mister_printerd -d /dev/ttyS1 -b $conn_speed -m "$PRINTER_MODEL" -c "$CORE" -o /media/fat/printers
 				[ ! -f /tmp/uartmode7 ] && exit 0
 				echo respawn mister_printerd
 				sleep 1

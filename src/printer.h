@@ -7,7 +7,7 @@
 #include <stdio.h>
 
 #define DEFAULT_DPI 144
-#define DEFAULT_TIMEOUT_SEC 4
+#define DEFAULT_TIMEOUT_SEC 12
 #define DEFAULT_BAUD 9600
 #define DEFAULT_DEVICE "/dev/ttyS1"
 #define DEFAULT_OUTPUT_DIR "/media/fat/printers"
@@ -77,6 +77,7 @@ typedef struct {
     bool save_png;
     bool verbose;
     bool daemon_mode;
+    bool dump_stream;
 } PrinterConfig;
 
 // Function declarations

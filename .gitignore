@@ -16,6 +16,10 @@ printers/
 *.prn
 tests/data/
 
+# Allow verified hardware test captures in debug_archive
+!debug_archive/
+!debug_archive/**
+
 # OS artifacts
 .DS_Store
 *.swp

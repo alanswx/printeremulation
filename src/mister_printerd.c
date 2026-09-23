@@ -67,8 +67,8 @@ static int open_serial_port(const char *path, int baud) {
     cfsetospeed(&tio, spd);
 
     // 8N1 + hardware flow control
+    tio.c_cflag &= ~(CSIZE | PARENB | CSTOPB);
     tio.c_cflag |= (CS8 | CLOCAL | CREAD);
-    tio.c_cflag &= ~(PARENB | CSTOPB | CSIZE);
 #ifdef CRTSCTS
     tio.c_cflag |= CRTSCTS; // RTS/CTS hardware handshake
 #endif
@@ -98,6 +98,7 @@ static void print_usage(const char *prog) {
     printf("  -s <size>      Paper size: letter | a4 (default: letter)\n");
     printf("  -r <dpi>       Canvas DPI: 144 | 288 (default: %d)\n", DEFAULT_DPI);
     printf("  -B             Run as background daemon\n");
+    printf("  -D             Dump raw serial stream to /tmp/printer_stream.bin (debug)\n");
     printf("  -v             Verbose output\n");
     printf("  -h             Show this help message\n");
 }
@@ -247,7 +248,7 @@ int main(int argc, char **argv) {
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "d:b:m:c:o:t:s:r:Bvh")) != -1) {
+    while ((opt = getopt(argc, argv, "d:b:m:c:o:t:s:r:BvhD")) != -1) {
         switch (opt) {
             case 'd': strncpy(cfg.device, optarg, sizeof(cfg.device) - 1); break;
             case 'b': cfg.baud = atoi(optarg); break;
@@ -269,6 +270,7 @@ int main(int argc, char **argv) {
                 break;
             case 'r': cfg.dpi = atoi(optarg); break;
             case 'B': cfg.daemon_mode = true; break;
+            case 'D': cfg.dump_stream = true; break;
             case 'v': cfg.verbose = true; break;
             case 'h': print_usage(argv[0]); return 0;
             default: print_usage(argv[0]); return 1;
@@ -336,13 +338,27 @@ int main(int argc, char **argv) {
         if (poll_res > 0 && (pfd.revents & POLLIN)) {
             ssize_t n = read(fd, read_buf, sizeof(read_buf));
             if (n > 0) {
+                bool dump_raw = cfg.dump_stream || (access("/tmp/debug_printer_stream", F_OK) == 0);
                 if (!job.job_active) {
                     job_start(&job, &cfg);
                     if (job.model != MODEL_AUTO) {
                         reset_model_parser(&job);
                     }
+                    if (dump_raw) {
+                        // Truncate raw stream file on new job
+                        FILE *fraw_init = fopen("/tmp/printer_stream.bin", "wb");
+                        if (fraw_init) fclose(fraw_init);
+                    }
                 }
                 job.last_data_time = (long)now;
+
+                if (dump_raw) {
+                    FILE *fraw = fopen("/tmp/printer_stream.bin", "ab");
+                    if (fraw) {
+                        fwrite(read_buf, 1, n, fraw);
+                        fclose(fraw);
+                    }
+                }
 
                 for (ssize_t i = 0; i < n; i++) {
                     uint8_t b = read_buf[i];

@@ -11,6 +11,7 @@ The goal of this project is to provide authentic retro printer emulation across 
 * **Target Printers**: **Apple ImageWriter (I, II, LQ)**, **Epson ESC/P (FX-80, MX-80, LQ-800)**, **Coleco Adam SmartWriter**, and **Commodore MPS 803**.
 * **Output Standard**: Multi-page, vector-accurate **PDF documents** (Letter 8.5x11" or A4) stored on the SD card at `/media/fat/printers/Print_YYYY-MM-DD_HH-MM-SS.pdf`.
 * **Benchmark Goal**: Successfully boot Broderbund's **The Print Shop** on the Apple IIe / Apple IIgs and print greeting cards, banners, and signs with zero graphical artifacts or alignment seams.
+  * **STATUS: VERIFIED ON LIVE HARDWARE!** Multiple 4-page, 4-color continuous banners (1.08 MB and 1.12 MB) have been printed from *The Print Shop* on the Apple IIgs core over hardware UART with 0 errors.
 
 ---
 
@@ -52,7 +53,7 @@ The ARM HPS runs a stripped-down embedded Linux environment on the DE10-Nano:
    - Code must be clean, portable ANSI C / C++17 that compiles warning-free with `gcc` and `clang`.
 4. **Job Demarcation**:
    - Trigger page commit on `0x0C` (`FF` Form Feed).
-   - Trigger job flush and file write on inactivity timeout (default: 4 seconds).
+   - Trigger job flush and file write on inactivity timeout (default: 12 seconds in `src/printer.h` to allow vintage CPUs time for raster calculation).
 
 ---
 
@@ -60,6 +61,7 @@ The ARM HPS runs a stripped-down embedded Linux environment on the DE10-Nano:
 
 Before modifying or implementing printer parsers, inspect the corresponding references and documentation:
 * **Core Architecture**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+* **Project Handoff & Status**: [docs/HANDOFF.md](docs/HANDOFF.md)
 * **Computer Cores Catalog**: [docs/mister_cores_printer_catalog.md](docs/mister_cores_printer_catalog.md)
 * **FujiNet Analysis**: [docs/fujinet_printer_analysis.md](docs/fujinet_printer_analysis.md)
 * **ImageWriter Specifications**: [docs/imagewriter_reference.md](docs/imagewriter_reference.md)
@@ -67,6 +69,7 @@ Before modifying or implementing printer parsers, inspect the corresponding refe
 * **Apple II Interface Hardware**: [docs/apple2_printer_interfaces.md](docs/apple2_printer_interfaces.md)
 * **Casio Loopy Printer**: [docs/casio_loopy_printer.md](docs/casio_loopy_printer.md)
 * **MiSTer Integration Plan**: [docs/mister_integration_plan.md](docs/mister_integration_plan.md)
+* **Verified Hardware Datasets**: [debug_archive/](debug_archive/)
 
 ### Reference Codebases:
 * [references/fujinet](references/fujinet): FujiNet virtual printer library (`epson_80`, `epson_tps`, `coleco_printer`, `commodoremps803`, `okimate_10`).
@@ -75,9 +78,9 @@ Before modifying or implementing printer parsers, inspect the corresponding refe
 
 ---
 
-## 5. Working Proof of Concept
+## 5. Working Proof of Concept & Hardware Verification
 
-A verified prototype exists in `prototype/`:
+### Standalone Prototype:
 ```bash
 # Build prototype:
 gcc -O2 -Ireferences/PDFGen prototype/printer_to_pdf.c references/PDFGen/pdfgen.c -o prototype/printer_to_pdf
@@ -89,4 +92,14 @@ gcc -O2 -Ireferences/PDFGen prototype/printer_to_pdf.c references/PDFGen/pdfgen.
 python3 prototype/gen_escp_test.py
 ./prototype/printer_to_pdf epson test_escp.prn output_escp.pdf
 ```
-Always run and verify these tests before pushing parser modifications.
+
+### Full Daemon Matrix Test:
+```bash
+make test
+```
+
+### Hardware Verification:
+Live serial captures from *The Print Shop* on the Apple IIgs are archived in:
+* `debug_archive/PrintShop_Color_Raw_1.08MB.bin` -> [`debug_archive/Print_2026-09-22_23-09-44.pdf`](debug_archive/Print_2026-09-22_23-09-44.pdf) (Page previews: `debug_archive/pages/banner-1.png` .. `banner-4.png`)
+
+Always run and verify tests before pushing parser modifications.
