@@ -3,93 +3,131 @@
 
 #include "font5x7.h"
 
-// Bi-directional line buffer for Coleco Adam SmartWriter
-typedef struct {
-    char line[120];
-    int column;
-    bool backwards;
-} AdamBidi;
+// Coleco ADAM daisy wheel printer (AdamNet device 2).
+//
+// The printer holds only 16 characters and EOS sends it plain bytes, so the
+// parser models the print head itself: a column at 10 characters per inch
+// (ADAM Technical Manual 1-1: "Pitch is 10 characters to the inch"), a vertical
+// position in half lines, and a print direction. Characters are struck wherever
+// the head is, which covers everything SmartWriter does with it:
+//
+//   CR   carriage to column 0
+//   LF   one line (1/6")
+//   VT   half a line (1/12"). SmartWriter feeds each line as VT text VT, and
+//        prints superscripts on the half line above the text before the first VT
+//   BS   one column back. SmartWriter uses runs of BS, not CR, to return to the
+//        margin
+//   SO   reverse the head's left and right (Technical Manual 4.2), so characters
+//        print right to left. SmartWriter prints some lines backwards
+//   SI   back to left to right
+//   FF   next sheet
+//   ESC  the manual says the printer responds to escape but not how; ESC and the
+//        byte after it are dropped
+//
+// The codes and how SmartWriter uses them were checked against its output
+// captured with the ColecoAdam MiSTer core's simulator (--printer).
+//
+// The paper is treated as continuous (fan-fold): the head starts half an inch
+// down the first sheet and a new page begins wherever the feed crosses a sheet
+// boundary, so SmartWriter's own page-length feeding lands where it should.
 
-static AdamBidi bidi;
+#define ADAM_CPI        10
+#define ADAM_HALF_LPI   12   // half lines per inch
+#define ADAM_COLUMNS    95   // 9-1/2" carriage
+
+typedef struct {
+    int  column;       // 0 .. ADAM_COLUMNS-1
+    int  half_line;    // baseline, in half lines from the top of the current sheet
+    int  top_half;     // where the head sits on a fresh sheet
+    int  sheet_halves; // half lines per sheet
+    bool reverse;      // SO: printing right to left
+    bool escape;       // the previous byte was ESC
+} AdamHead;
+
+static AdamHead head;
 
 void parser_adam_init(JobState *job) {
-    (void)job;
-    memset(bidi.line, ' ', sizeof(bidi.line));
-    bidi.column = 0;
-    bidi.backwards = false;
-    job->canvas.line_spacing = job->canvas.dpi / 6; // 1/6" standard
-    job->canvas.cur_color = (RGBColor){0, 0, 0};
+    Canvas *c = &job->canvas;
+    memset(&head, 0, sizeof(head));
+    head.top_half     = ADAM_HALF_LPI / 2;   // 0.5"
+    head.sheet_halves = (c->height * ADAM_HALF_LPI) / c->dpi;
+    head.half_line    = head.top_half;
+    c->line_spacing   = c->dpi / 6;
+    c->cur_color      = (RGBColor){0, 0, 0};
 }
 
-static void draw_char(Canvas *c, char ch) {
-    if (ch < 32 || ch > 126) ch = ' ';
-    int idx = ch - 32;
-    int scale = (c->dpi >= 144) ? (c->dpi / 72) : 1;
+// Feed the paper by n half lines, starting new sheets as the feed crosses them
+static void feed(JobState *job, int n) {
+    head.half_line += n;
+    while (head.half_line >= head.sheet_halves) {
+        job_commit_page(job);
+        head.half_line -= head.sheet_halves;
+    }
+}
+
+static void strike(Canvas *c, char ch) {
+    if (ch <= ' ' || ch > '~') return;   // a space moves the head and prints nothing
+    const uint8_t *glyph = font5x7_data[ch - ' '];
+    // Scale the 5x7 cell to fill most of the 1/10" pitch: 2x2 pixels a dot at 144 DPI
+    int scale = c->dpi >= 144 ? c->dpi / 72 : 1;
+    int cell_w = c->dpi / ADAM_CPI;
+    int x0 = (head.column * c->dpi) / ADAM_CPI + (cell_w - 5 * scale) / 2;
+    int y0 = (head.half_line * c->dpi) / ADAM_HALF_LPI - 7 * scale;   // sits on the baseline
 
     for (int col = 0; col < 5; col++) {
-        uint8_t bits = font5x7_data[idx][col];
+        uint8_t bits = glyph[col];
         for (int row = 0; row < 7; row++) {
             if (bits & (1 << row)) {
-                int px = c->head_x + (col * scale);
-                int py = c->head_y + (row * scale);
-                canvas_plot_dot(c, px, py, c->cur_color);
-                if (scale > 1) {
-                    canvas_plot_dot(c, px + 1, py, c->cur_color);
-                    canvas_plot_dot(c, px, py + 1, c->cur_color);
-                    canvas_plot_dot(c, px + 1, py + 1, c->cur_color);
-                }
+                canvas_plot_rect(c, x0 + col * scale, y0 + row * scale, scale, scale, c->cur_color);
             }
         }
     }
-    c->head_x += 6 * scale;
 }
 
-static void flush_bidi_line(JobState *job) {
-    Canvas *c = &job->canvas;
-    int margin_left = (int)(0.5f * c->dpi);
-    int char_spacing = (c->dpi >= 144) ? (6 * (c->dpi / 72)) : 6;
-
-    c->head_x = margin_left;
-    for (int col = 0; col < 120; col++) {
-        if (bidi.line[col] != ' ') {
-            c->head_x = margin_left + (col * char_spacing);
-            draw_char(c, bidi.line[col]);
-        }
-    }
-    memset(bidi.line, ' ', sizeof(bidi.line));
-    bidi.column = 0;
-    bidi.backwards = false;
+// Move the head in its current direction; SO swaps left and right
+static void step(int columns) {
+    head.column += head.reverse ? -columns : columns;
+    if (head.column < 0) head.column = 0;
+    if (head.column > ADAM_COLUMNS - 1) head.column = ADAM_COLUMNS - 1;
 }
 
 void parser_adam_byte(JobState *job, uint8_t byte) {
-    Canvas *c = &job->canvas;
-    int margin_bottom = c->height - (int)(0.5f * c->dpi);
+    if (head.escape) {
+        head.escape = false;
+        return;
+    }
 
-    if (byte == 0x08) { // Backspace
-        if (bidi.column > 0) bidi.column--;
-    } else if (byte == 0x0D) { // CR
-        flush_bidi_line(job);
-    } else if (byte == 0x0A) { // LF
-        flush_bidi_line(job);
-        c->head_y += c->line_spacing;
-        if (c->head_y >= margin_bottom) {
-            job_commit_page(job);
-        }
-    } else if (byte == 0x0C) { // FF
-        flush_bidi_line(job);
+    switch (byte) {
+    case 0x08: // BS
+        step(-1);
+        break;
+    case 0x0A: // LF
+        feed(job, 2);
+        break;
+    case 0x0B: // VT: half a line
+        feed(job, 1);
+        break;
+    case 0x0C: // FF: the same place on the next sheet
         job_commit_page(job);
-    } else if (byte == 0x11) { // Set reverse print direction
-        bidi.backwards = true;
-    } else if (byte == 0x12) { // Set forward print direction
-        bidi.backwards = false;
-    } else if (byte >= 32 && byte <= 126) {
-        if (bidi.column >= 0 && bidi.column < 120) {
-            bidi.line[bidi.column] = (char)byte;
+        head.half_line = head.top_half;
+        break;
+    case 0x0D: // CR
+        head.column = 0;
+        break;
+    case 0x0E: // SO: right to left
+        head.reverse = true;
+        break;
+    case 0x0F: // SI: left to right
+        head.reverse = false;
+        break;
+    case 0x1B: // ESC
+        head.escape = true;
+        break;
+    default:
+        if (byte >= 0x20 && byte < 0x7F) {
+            strike(&job->canvas, (char)byte);
+            step(1);
         }
-        if (bidi.backwards) {
-            if (bidi.column > 0) bidi.column--;
-        } else {
-            if (bidi.column < 119) bidi.column++;
-        }
+        break;
     }
 }

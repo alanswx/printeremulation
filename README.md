@@ -141,17 +141,27 @@ The test suite generates multi-page PDF output for:
 Output PDFs are placed into `printers/`.
 
 ### 2. Cross-Compile for MiSTer ARM
-If an ARM cross compiler (`arm-linux-gnueabihf-gcc`) is on your `$PATH`, `make arm` will use it directly. Otherwise, it automatically falls back to Docker:
+The build system automatically detects an ARM toolchain in this order:
+1. Local `arm-none-linux-gnueabihf-gcc` / `arm-linux-gnueabihf-gcc` (in `$PATH` or `/opt/gcc-arm*`)
+2. Local Docker container (`mister-build:latest`)
+3. Remote build host (`cottageubuntu`) with native ARM toolchain
 ```bash
 make arm
 ```
-Produces stripped binary: `build/mister_printerd.arm` (~66 KB).
+Produces stripped binary: `build/mister_printerd.arm` (~70 KB).
 
-### 3. Deploy to MiSTer
+### 3. Package a Release (PDFViewer Distribution Model)
+Similar to [PDFViewer_MiSTer](https://github.com/MiSTer-devel/PDFViewer_MiSTer), release binaries are staged in `releases/`:
+```bash
+make release
+```
+Stages the versioned binary `releases/mister_printerd_YYYYMMDD` and `releases/mister_printerd`.
+
+### 4. Deploy to MiSTer
 ```bash
 make deploy
 ```
-Copies `mister_printerd` to `root@mister.local:/media/fat/mister_printerd` and sets execute permissions.
+Copies `mister_printerd` directly to `root@mister.local:/media/fat/mister_printerd` and sets execute permissions.
 
 ---
 

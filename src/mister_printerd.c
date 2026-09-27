@@ -297,6 +297,12 @@ int main(int argc, char **argv) {
     signal(SIGINT, sig_handler);
     signal(SIGTERM, sig_handler);
 
+    // The ADAM has one printer, and its streams have no escapes to sniff but do use
+    // BS, which detect_model_from_stream() takes for Commodore graphics
+    if (cfg.model == MODEL_AUTO && get_core_fallback_model(cfg.core_name) == MODEL_ADAM) {
+        cfg.model = MODEL_ADAM;
+    }
+
     printf("[printerd] Starting mister_printerd (Model: %s, Core: '%s', Baud: %d, Device: %s, Out: %s)\n",
            (cfg.model == MODEL_AUTO) ? "auto" :
            (cfg.model == MODEL_IMAGEWRITER) ? "imagewriter" :

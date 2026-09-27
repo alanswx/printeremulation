@@ -7,21 +7,16 @@ This document outlines the step-by-step roadmap to integrate printer emulation i
 ## 1. MiSTer Main Binary Changes (`menu.cpp`, `user_io.cpp`, `user_io.h`)
 
 ### 1.1 OSD Menu Additions (`menu.cpp`)
-1. **Extend `config_uart_msg`**:
+1. **Extend `config_uart_msg` & Daemon Auto-Detection**:
    ```cpp
    // Current:
    const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI"};
    // Proposed:
    const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer"};
    ```
-2. **Printer Submenu (`MENU_PRINTER`)**:
-   - **Printer Model**: `Apple ImageWriter II` | `Epson FX-80 (9-pin)` | `Epson LQ-800 (24-pin)`
-   - **Output Format**: `PDF (Vector/Dots)` | `PDF + PNG Thumbnail` | `Text Dump`
-   - **Paper Size**: `US Letter (8.5x11")` | `A4 (210x297mm)` | `Continuous Fanfold`
-   - **Job Timeout**: `2s` | `4s` | `8s` | `Manual / Form Feed Only`
-   - **Baud Rate**: `9600` (Default for ImageWriter/SSC) | `19200` (IIgs) | `4800` | `2400`
-3. **Configuration Persistence**:
-   - Saved to `/media/fat/config/printer.<core_name>` or within the standard INI/CFG structure.
+   - **Quiet Upgrade Guard**: In `menu.cpp` (`MENU_UART3`), Mode 7 ("Printer") is dynamically gated on `is_printer_available()` (probes `/media/fat/mister_printerd`, `/media/fat/linux/mister_printerd`, `/media/fat/Scripts/mister_printerd`, and `/usr/local/bin/mister_printerd`).
+   - If the daemon is not installed, "Printer" is omitted from the UART menu, avoiding broken selections or confusing failures for users without the daemon.
+   - If a saved core configuration specifies mode 7 on a system without the daemon installed, `user_io_init` safely falls back to mode 0.
 
 ### 1.2 Linux Scripts & Daemon Execution (`user_io.cpp`)
 * When UART mode `7` (Printer) is activated:
