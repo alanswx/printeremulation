@@ -11,7 +11,8 @@
 //                band of image data; rect is left,top,right,bottom as LE16
 //                printer coordinates (inclusive), 'c' = CMYK planes, 'R' = mono
 //   0C           end of page
-//   L, nuA, D, N, Z, A, H, B, m<2 bytes>   setup / new page, no reply
+//   m<1 byte>, and single-byte L, F, A, D, E, N, Z, H, B, s, n, t, x, l, h:
+//                setup / page / mode commands, no reply (see docs/stylewriter_driver_map.md)
 //
 // Band data is one encoded row per plane (C, M, Y, K for color bands), each XORed
 // with the previous row of the same plane; the XOR history resets every band.
@@ -236,8 +237,8 @@ static void state_byte(JobState *job, uint8_t b) {
                     sw.hdr_len = 0;
                     sw.state = SW_RECT;
                     break;
-                case 'm':               // m0n / m0s: quality setup, 2 parameter bytes
-                    sw.skip = 2;
+                case 'm':               // m<digit>: print mode, one parameter byte
+                    sw.skip = 1;
                     sw.state = SW_SKIP;
                     break;
                 case 0x0C:              // end of page

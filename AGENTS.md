@@ -69,6 +69,7 @@ Before modifying or implementing printer parsers, inspect the corresponding refe
 * **Apple II Interface Hardware**: [docs/apple2_printer_interfaces.md](docs/apple2_printer_interfaces.md)
 * **Casio Loopy Printer**: [docs/casio_loopy_printer.md](docs/casio_loopy_printer.md)
 * **Apple StyleWriter (parked)**: [docs/stylewriter.md](docs/stylewriter.md)
+* **StyleWriter driver disassembly map**: [docs/stylewriter_driver_map.md](docs/stylewriter_driver_map.md)
 * **MiSTer Integration Plan**: [docs/mister_integration_plan.md](docs/mister_integration_plan.md)
 * **Verified Hardware Datasets**: [debug_archive/](debug_archive/)
 

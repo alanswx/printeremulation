@@ -66,77 +66,52 @@ StyleWriter driver selected:
 
 Relevant Quadra core behavior (`MacQuadra800_MiSTer/rtl/scc.v`, ~line 1620):
 
-- With the baud-rate generator disabled (WR14 bit 0 = 0) — how Mac drivers get
-  57600, clocking from RTxC (3.6864 MHz ÷ 64) — the core falls back to a fixed
-  9600 divider (`CPB_9600`). RTxC ÷ 16/32/64 is not modeled.
+- With the baud-rate generator disabled (WR14 bit 0 = 0) and the clock taken
+  straight from RTxC, the core falls back to a fixed 9600 divider (`CPB_9600`).
+  RTxC ÷ 16/32/64 isn't modeled. Only the (unused on 68k) fast mode needs this.
+  Normal 57600 uses the baud-rate generator with time constant 0 and x16, which
+  the core handles.
 - With WR11 selecting the TRxC pin, the core substitutes a permanent virtual
-  1 MHz clock (added for MIDI). Real StyleWriters can drive TRxC externally for a
-  ~1 Mbit/s "fast" mode; if Apple's driver uses it, this substitute is unlikely
-  to produce something the daemon can decode.
+  1 MHz clock (added for MIDI). The StyleWriter driver doesn't select TRxC.
 
-### Driver disassembly: fast mode is 230.4 kbaud async, clocked from RTxC
+### Driver disassembly (full map: [stylewriter_driver_map.md](stylewriter_driver_map.md))
 
-Source: the 68k code of the Mac OS 8.1 "Color SW 2500" driver (CODE -8218
-`EngineComm`) and the System file's serial patch for the Quadra ROM family
-(`PTCH 1660`), both pulled from the Quadra disk image.
+The Mac OS 8.1 "Color SW 2500" driver was pulled from the Quadra disk image and
+disassembled.
 
-- **Normal setup:** the driver opens `.AOut`/`.AIn` (or `.BOut`/`.BIn`) through
-  the standard Serial Driver and calls `SerReset` with `$4C00` (57600 baud, 8N1).
-  `SerHShake` is all zeros (no XON/XOFF, no CTS, no DTR). This matches lpstyl.
-- **Fast mode:** the driver checks the Serial Driver version (Status csCode 9,
-  needs version 5 or later), then sends the private Control csCode **`'JF'`
-  (`$4A46`)**. `PTCH 1660` handles it by clearing the time constant and
-  reprogramming the SCC from a table identical to the ROM's normal one except:
-  - **WR11 `$50` → `$00`**: TX and RX clocked from the **RTxC pin** instead of
-    the baud-rate generator.
-  - **WR14 `$01` → `$00`**: baud-rate generator disabled.
-
-  WR4 keeps the x16 clock mode, so the line runs at **3.6864 MHz / 16 = 230,400
-  baud**. It's still **asynchronous** 8N1 with start and stop bits, not a
-  synchronous protocol.
-- **`'jf'` (`$6A66`)**, with a one-byte parameter, only toggles the
-  transmit-interrupt enable (WR1 bit 1) in the driver's shadow copy.
-- The driver also reads the break-received bit from `SerStatus`, so the printer
-  may signal with a break.
-
-Table format, for the record (`ROM $6AEB8`, the writer both tables use): 16-bit
-entries. Fixed entries are (value, register), and the register byte is written
-first. `$FF` entries are (register, `$FF`): the value comes from the driver's
-per-channel shadow bytes (WR4, WR1, WR3, WR5, WR12, WR13, WR3, WR5, WR1, in
-order from `$21`).
-
-**Why the Quadra core fails:** with the BRG disabled, `scc.v` ignores the RTxC
-source and falls back to a fixed 9600-baud divider (`CPB_9600`). The Mac then
-transmits at 9600 instead of 230,400, so the daemon can't decode anything at any
-setting.
-
-**What's needed:**
-1. **Quadra core:** when WR11 selects RTxC, clock from 3.6864 MHz (the
-   `BRG_RATIO_X128` constant already exists) divided by the WR4 clock mode (x16 →
-   230,400, x32 → 115,200, x64 → 57,600), for both TX and RX.
-2. **Daemon:** switch the HPS UART from 57600 to 230,400 at the same moment the
-   Mac does. The printer must be told first, so there should be a protocol
-   command just before `'JF'`, which the daemon can watch for. The HPS 16550
-   supports 230,400.
+- **The 68k driver runs at 57,600 baud, 8N1, with no handshaking, for the whole
+  job.** Its command set is a superset of lpstyl's. The handshake replies, the
+  band format and the row coding all match what the daemon implements.
+- **A 230.4 kbaud fast mode exists but is dead code on 68k.** It works like
+  this: send `'h'` to the printer, then the private Serial Driver call `'JF'`,
+  which Mac OS 8.1 patches in (`PTCH 1660`) to clock the SCC from RTxC ÷ 16. But
+  nothing in the 68k code calls it, so it presumably belongs to the PowerPC path.
+- **Correction:** an earlier version of this document blamed fast mode, and
+  the Quadra core's missing RTxC clocking, for the failure. That can't be it,
+  because the 68k driver never enters fast mode. The Quadra failure is still
+  unexplained.
+- **Parser fix from the map:** `'m'` takes one parameter byte, not two.
 
 ### Open questions / next steps
 
-1. **Rule out AppleTalk.** If AppleTalk is active on the printer port (LocalTalk),
-   the Mac runs the SCC in synchronous mode, which would also look like this.
-   Check the Chooser / AppleTalk control panel, set AppleTalk inactive (or to
+1. **Rule out AppleTalk.** The driver's `Open` refuses the port (error −23) if
+   another driver already has it, and LocalTalk on the printer port would
+   also put the SCC in a synchronous mode that looks like our capture. Check
+   the Chooser and the AppleTalk control panel, set AppleTalk inactive (or to
    Ethernet), and retry.
-2. **Model RTxC clocking in the Quadra core** (see the disassembly section):
-   WR11 = RTxC → 3.6864 MHz ÷ WR4 clock mode, for TX and RX.
-3. **Find the speed-switch command.** Trace the callers of the `'JF'` wrapper
-   (`EngineComm` `$173A`) to see what the driver tells the printer before
-   switching. Then have the daemon change the UART to 230,400 when it sees that
-   command.
-4. Once real driver traffic reaches the daemon, capture it
-   (`touch /tmp/debug_printer_stream` → `/tmp/printer_stream.bin`) and check for
-   commands lpstyl never sends; add the capture to `make test`.
-5. Later: Color StyleWriter Pro (needs a traffic capture; no public protocol notes),
-   and adding the StyleWriter models to the Main OSD printer-model menu (for now,
-   `echo stylewriter > /tmp/PRINTER_MODEL` and restart the UART).
+2. **Check the port mapping and the core's SCC writes.** Confirm which SCC
+   channel the Chooser's printer/modem port maps to on the Quadra core, and log
+   WR4/WR5/WR11–WR14 while printing. The 68k driver should program ordinary
+   57,600 x16 async.
+3. Once real driver traffic reaches the daemon, capture it
+   (`touch /tmp/debug_printer_stream` → `/tmp/printer_stream.bin`), check query
+   `'e'` (not in lpstyl) and anything else unexpected, and add the capture to
+   `make test`.
+4. Only for a PowerPC host: support fast mode. The daemon would switch the UART
+   to 230,400 on `'h'`, and the core would clock the SCC from RTxC.
+5. Later: Color StyleWriter Pro (needs a traffic capture; no public protocol
+   notes), and adding the StyleWriter models to the Main OSD printer-model menu
+   (for now, `echo stylewriter > /tmp/PRINTER_MODEL` and restart the UART).
 
 ## Running it on the MiSTer
 
