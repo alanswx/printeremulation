@@ -92,6 +92,8 @@ test: $(TARGET)
 	$(TARGET) -d tests/samples/imagewriter_printshop.txt -m imagewriter -t 1 -v
 	@echo "3. Testing ImageWriter II Color..."
 	$(TARGET) -d tests/data/test_imagewriter_color.prn -m imagewriter -t 1 -v
+	@echo "3b. Testing ImageWriter II from GS/OS Print Manager (ESC V column repeats, captured on MiSTer)..."
+	$(TARGET) -d tests/samples/imagewriter_gsos_hermes.prn -m imagewriter -t 1 -v
 	@echo "4. Testing Epson ESC/P (Print Shop TPS mode)..."
 	$(TARGET) -d tests/data/test_escp.prn -m epson-tps -t 1 -v
 	@echo "5. Testing Coleco Adam SmartWriter (streams captured from the ColecoAdam core)..."
