@@ -1,35 +1,107 @@
 diff --git a/menu.cpp b/menu.cpp
-index 8df3650..9cd609e 100644
+index 6232677..3cf59ba 100644
 --- a/menu.cpp
 +++ b/menu.cpp
-@@ -252,7 +252,7 @@ const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
+@@ -267,7 +267,8 @@ const char *config_button_turbo_choice_msg[] = { "A only", "B only", "A & B" };
  const char *joy_button_map[] = { "RIGHT", "LEFT", "DOWN", "UP", "BUTTON A", "BUTTON B", "BUTTON X", "BUTTON Y", "BUTTON L", "BUTTON R", "SELECT", "START", "KBD TOGGLE", "MENU", "    Stick 1: Tilt RIGHT", "    Stick 1: Tilt DOWN", "   Mouse emu X: Tilt RIGHT", "   Mouse emu Y: Tilt DOWN" };
  const char *joy_ana_map[] = { "    DPAD test: Press RIGHT", "    DPAD test: Press DOWN", "   Stick 1 Test: Tilt RIGHT", "   Stick 1 Test: Tilt DOWN", "   Stick 2 Test: Tilt RIGHT", "   Stick 2 Test: Tilt DOWN" };
  const char *config_stereo_msg[] = { "0%", "25%", "50%", "100%" };
 -const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI"};
-+const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer"};
++const char *config_uart_msg[] = { "      None", "       PPP", "   Console", "      MIDI", "     Modem", "UDP", "SNI", "   Printer", "   FujiNet"};
++const char *config_printer_models[] = { "         Auto", "ImageWriter II", "  Epson FX-80", "  Coleco Adam", "Commodore 803" };
  const char *config_midilink_mode[] = {"Local", "Local", "  USB", "  UDP", "-----", "-----", "  USB" };
  const char *config_afilter_msg[] = { "Internal","Custom" };
  const char *config_smask_msg[] = { "None", "1x", "2x", "1x Rotated", "2x Rotated" };
-@@ -3776,13 +3776,15 @@ void HandleUI(void)
+@@ -3626,6 +3627,14 @@ void HandleUI(void)
+ 				menumask |= 2;
+ 			}
+ 
++			if (mode == 7)
++			{
++				int pmodel = GetPrinterModel();
++				sprintf(s, " Printer:    %s", config_printer_models[pmodel]);
++				OsdWrite(m++, s, menusub == 1);
++				menumask |= 2;
++			}
++
+ 			if (mode == 3)
+ 			{
+ 				sprintf(s, " MidiLink:             %s", config_midilink_mode[midilink]);
+@@ -3685,21 +3694,42 @@ void HandleUI(void)
+ 			case 1:
+ 				{
+ 					int mode = GetUARTMode();
+-					int midilink = GetMidiLinkMode();
+-					SetUARTMode(0);
+-					if (minus)
++					if (mode == 4)
+ 					{
+-						if (midilink <= 4) midilink = 6;
+-						else midilink--;
++						int midilink = GetMidiLinkMode();
++						SetUARTMode(0);
++						if (minus)
++						{
++							if (midilink <= 4) midilink = 6;
++							else midilink--;
++						}
++						else
++						{
++							if (midilink >= 6) midilink = 4;
++							else midilink++;
++						}
++						SetMidiLinkMode(midilink);
++						SetUARTMode(mode);
++						menustate = MENU_UART1;
+ 					}
+-					else
++					else if (mode == 7)
+ 					{
+-						if (midilink >= 6) midilink = 4;
+-						else midilink++;
++						int pmodel = GetPrinterModel();
++						SetUARTMode(0);
++						if (minus)
++						{
++							if (pmodel <= 0) pmodel = 4;
++							else pmodel--;
++						}
++						else
++						{
++							if (pmodel >= 4) pmodel = 0;
++							else pmodel++;
++						}
++						SetPrinterModel(pmodel);
++						SetUARTMode(mode);
++						menustate = MENU_UART1;
+ 					}
+-					SetMidiLinkMode(midilink);
+-					SetUARTMode(mode);
+-					menustate = MENU_UART1;
+ 				}
+ 				break;
+ 
+@@ -3813,13 +3843,17 @@ void HandleUI(void)
  			bool udp_enabled = mode == 5;
  			// SNI is only selectable if playing SNES and snid is present
  			bool sni_enabled = (mode == 6) || (is_snes() && FileExists("/media/fat/snid"));
 +			// Printer is only selectable if mister_printerd is installed
 +			bool printer_enabled = (mode == 7) || is_printer_available();
++			// FujiNet is only selectable if fujinet is installed
++			bool fujinet_enabled = (mode == 8) || is_fujinet_available();
  
 -			uint32_t skipped = !udp_enabled + !sni_enabled;;
-+			uint32_t skipped = !udp_enabled + !sni_enabled + !printer_enabled;
++			uint32_t skipped = !udp_enabled + !sni_enabled + !printer_enabled + !fujinet_enabled;
  
              for (uint32_t i = 0; i < 15; i++)
              {
  				// Skip drawing unselectable entries
 -				while ((!udp_enabled && m == 5) || (!sni_enabled && m == 6))
-+				while ((!udp_enabled && m == 5) || (!sni_enabled && m == 6) || (!printer_enabled && m == 7))
++				while ((!udp_enabled && m == 5) || (!sni_enabled && m == 6) || (!printer_enabled && m == 7) || (!fujinet_enabled && m == 8))
  				{
  					m++;
  				}
-@@ -3897,7 +3899,7 @@ void HandleUI(void)
+@@ -3934,7 +3968,7 @@ void HandleUI(void)
  					if (menusub == i)
  					{
  						ValidateUARTbaud(GetUARTMode(), bauds[i]);
@@ -39,17 +111,26 @@ index 8df3650..9cd609e 100644
  							sprintf(s, "/sbin/mlinkutil BAUD %d", GetUARTbaud(GetUARTMode()));
  							system(s);
 diff --git a/user_io.cpp b/user_io.cpp
-index 386093a..ebed911 100644
+index 1fb5c7f..99934d9 100644
 --- a/user_io.cpp
 +++ b/user_io.cpp
-@@ -1150,9 +1150,18 @@ int GetUARTMode()
+@@ -1207,9 +1207,27 @@ int GetUARTMode()
  	if (!stat("/tmp/uartmode4", &filestat)) return 4;
  	if (!stat("/tmp/uartmode5", &filestat)) return 5;
  	if (!stat("/tmp/uartmode6", &filestat)) return 6;
 +	if (!stat("/tmp/uartmode7", &filestat)) return 7;
++	if (!stat("/tmp/uartmode8", &filestat)) return 8;
  	return 0;
  }
  
++bool is_fujinet_available()
++{
++	return FileExists("/media/fat/fujinet/fujinet") ||
++	       FileExists("/media/fat/mister_fujinetd") ||
++	       FileExists("/media/fat/Scripts/fujinet") ||
++	       FileExists("/usr/local/bin/fujinet");
++}
++
 +bool is_printer_available()
 +{
 +	return FileExists("/media/fat/mister_printerd") ||
@@ -61,23 +142,69 @@ index 386093a..ebed911 100644
  void SetUARTMode(int mode)
  {
  	mode &= 0xF;
-@@ -1723,6 +1732,7 @@ void user_io_init(const char *path, const char *xml)
+@@ -1358,6 +1376,37 @@ void ResetUART()
+ 	}
+ }
+ 
++int GetPrinterModel()
++{
++	char model[32];
++	FILE *f = fopen("/tmp/PRINTER_MODEL", "r");
++	if (f)
++	{
++		if (fgets(model, sizeof(model), f))
++		{
++			fclose(f);
++			if (strstr(model, "imagewriter")) return 1;
++			if (strstr(model, "epson"))       return 2;
++			if (strstr(model, "adam"))        return 3;
++			if (strstr(model, "mps803"))      return 4;
++		}
++		else
++		{
++			fclose(f);
++		}
++	}
++	return 0; // 0 = Auto
++}
++
++void SetPrinterModel(int model)
++{
++	const char *names[] = { "auto", "imagewriter", "epson-tps", "adam", "mps803" };
++	if (model >= 0 && model <= 4)
++	{
++		MakeFile("/tmp/PRINTER_MODEL", names[model]);
++	}
++}
++
+ uint16_t sdram_sz(int sz)
+ {
+ 	int res = 0;
+@@ -1793,6 +1842,8 @@ void user_io_init(const char *path, const char *xml)
  	SetUARTMode(0);
  	int midilink = (mode >> 8) & 0xFF;
  	int uartmode = mode & 0xFF;
 +	if (uartmode == 7 && !is_printer_available()) uartmode = 0;
++	if (uartmode == 8 && !is_fujinet_available()) uartmode = 0;
  	if (uartmode == 4 && (midilink < 4 || midilink>6)) midilink = 4;
  	if (uartmode == 3 && midilink > 3) midilink = 0;
  	if (uartmode < 3 || uartmode > 4) midilink = 0;
 diff --git a/user_io.h b/user_io.h
-index 648736f..a19f9ce 100644
+index b616c50..3674490 100644
 --- a/user_io.h
 +++ b/user_io.h
-@@ -248,6 +248,7 @@ uint16_t altcfg(int alt = -1);
+@@ -251,10 +251,14 @@ uint16_t altcfg(int alt = -1);
  
  void MakeFile(const char * filename, const char * data);
  int GetUARTMode();
 +bool is_printer_available();
++bool is_fujinet_available();
  void SetUARTMode(int mode);
  int GetMidiLinkMode();
  void SetMidiLinkMode(int mode);
+ void ResetUART();
++int GetPrinterModel();
++void SetPrinterModel(int model);
+ const uint32_t* GetUARTbauds(int mode);
+ uint32_t GetUARTbaud(int mode);
+ const char* GetUARTbaud_label(int mode);
