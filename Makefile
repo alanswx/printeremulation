@@ -40,7 +40,7 @@ ARM_TARGET = build/mister_printerd.arm
 RELEASE_BINARY = releases/mister_printerd_$(DATE)
 RELEASE_SYMLINK = releases/mister_printerd
 
-.PHONY: all arm release deploy test clean
+.PHONY: all arm release deploy test test-stylewriter-lpstyl clean
 
 all: $(TARGET)
 
@@ -102,8 +102,26 @@ test: $(TARGET)
 	$(TARGET) -d tests/samples/adam_smartwriter_superscript.prn -c Adam -t 1 -v
 	@echo "6. Testing Commodore MPS 803..."
 	$(TARGET) -d tests/data/test_mps803.prn -m mps803 -t 1 -v
+	@echo "7. Testing Apple StyleWriter (decoded dots compared against the source page)..."
+	python3 tests/stylewriter_loopback.py --host python --model stylewriter2500
+	python3 tests/stylewriter_loopback.py --host python --model stylewriter2500 --color
+	python3 tests/stylewriter_loopback.py --host python --model stylewriter1500 --color
+	python3 tests/stylewriter_loopback.py --host python --model stylewriter2
 	@echo "All tests passed successfully! Generated PDFs:"
 	@ls -lh printers/*.pdf
+
+# StyleWriter emulation driven by the real lpstyl host driver over a pty.
+# Needs references/lpstyl (git clone https://github.com/Godzil/lpstyl references/lpstyl).
+LPSTYL = build/lpstyl
+$(LPSTYL): references/lpstyl/lpstyl.c
+	@mkdir -p build
+	$(CC) -O2 -w -std=gnu89 -include unistd.h -include fcntl.h -include string.h \
+		-include stdlib.h -include errno.h -include signal.h -include termios.h -o $@ $<
+
+test-stylewriter-lpstyl: $(TARGET) $(LPSTYL)
+	python3 tests/stylewriter_loopback.py --host lpstyl --model stylewriter2500
+	python3 tests/stylewriter_loopback.py --host lpstyl --model stylewriter1500
+	python3 tests/stylewriter_loopback.py --host lpstyl --model stylewriter2
 
 clean:
 	rm -rf build printers/*.pdf printers/*.png

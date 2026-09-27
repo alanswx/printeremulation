@@ -34,7 +34,11 @@ static speed_t baud_to_speed(int baud) {
     }
 }
 
-static int open_serial_port(const char *path, int baud) {
+static bool is_stylewriter(PrinterModel m) {
+    return m == MODEL_SW2500 || m == MODEL_SW1500 || m == MODEL_SW2;
+}
+
+static int open_serial_port(const char *path, int baud, bool hw_flow) {
     if (strcmp(path, "-") == 0 || strcmp(path, "/dev/stdin") == 0) {
         return STDIN_FILENO;
     }
@@ -66,11 +70,15 @@ static int open_serial_port(const char *path, int baud) {
     cfsetispeed(&tio, spd);
     cfsetospeed(&tio, spd);
 
-    // 8N1 + hardware flow control
+    // 8N1 + hardware flow control (the StyleWriter has none: it relies on
+    // status polling, and its replies must go out regardless of CTS)
     tio.c_cflag &= ~(CSIZE | PARENB | CSTOPB);
     tio.c_cflag |= (CS8 | CLOCAL | CREAD);
 #ifdef CRTSCTS
-    tio.c_cflag |= CRTSCTS; // RTS/CTS hardware handshake
+    if (hw_flow) tio.c_cflag |= CRTSCTS; // RTS/CTS hardware handshake
+    else tio.c_cflag &= ~CRTSCTS;
+#else
+    (void)hw_flow;
 #endif
 
     tio.c_cc[VMIN] = 0;
@@ -91,7 +99,8 @@ static void print_usage(const char *prog) {
     printf("Options:\n");
     printf("  -d <dev>       Serial device path (default: %s or '-' for stdin)\n", DEFAULT_DEVICE);
     printf("  -b <baud>      Baud rate (default: %d)\n", DEFAULT_BAUD);
-    printf("  -m <model>     Printer model: auto | imagewriter | epson | epson-tps | adam | mps803 (default: auto)\n");
+    printf("  -m <model>     Printer model: auto | imagewriter | epson | epson-tps | adam | mps803 |\n"
+           "                 stylewriter (= stylewriter2500) | stylewriter1500 | stylewriter2 (default: auto)\n");
     printf("  -c <core>      Active core name (for auto-detect fallback, e.g. Apple-II, ColecoAdam, C64)\n");
     printf("  -o <dir>       Output directory for PDFs (default: %s)\n", DEFAULT_OUTPUT_DIR);
     printf("  -t <sec>       Inactivity timeout in seconds to commit job (default: %d)\n", DEFAULT_TIMEOUT_SEC);
@@ -188,6 +197,11 @@ static void reset_model_parser(JobState *job) {
         case MODEL_MPS803:
             parser_mps803_init(job);
             break;
+        case MODEL_SW2500:
+        case MODEL_SW1500:
+        case MODEL_SW2:
+            parser_stylewriter_init(job, m);
+            break;
         default:
             break;
     }
@@ -208,6 +222,11 @@ static void dispatch_byte(JobState *job, uint8_t byte) {
             break;
         case MODEL_MPS803:
             parser_mps803_byte(job, byte);
+            break;
+        case MODEL_SW2500:
+        case MODEL_SW1500:
+        case MODEL_SW2:
+            parser_stylewriter_byte(job, byte);
             break;
         default:
             break;
@@ -259,6 +278,10 @@ int main(int argc, char **argv) {
                 else if (strcasecmp(optarg, "epson-tps") == 0) cfg.model = MODEL_EPSON_TPS;
                 else if (strcasecmp(optarg, "adam") == 0) cfg.model = MODEL_ADAM;
                 else if (strcasecmp(optarg, "mps803") == 0) cfg.model = MODEL_MPS803;
+                else if (strcasecmp(optarg, "stylewriter") == 0 ||
+                         strcasecmp(optarg, "stylewriter2500") == 0) cfg.model = MODEL_SW2500;
+                else if (strcasecmp(optarg, "stylewriter1500") == 0) cfg.model = MODEL_SW1500;
+                else if (strcasecmp(optarg, "stylewriter2") == 0) cfg.model = MODEL_SW2;
                 else cfg.model = MODEL_AUTO;
                 break;
             case 'c': strncpy(cfg.core_name, optarg, sizeof(cfg.core_name) - 1); break;
@@ -308,10 +331,13 @@ int main(int argc, char **argv) {
            (cfg.model == MODEL_IMAGEWRITER) ? "imagewriter" :
            (cfg.model == MODEL_EPSON) ? "epson" :
            (cfg.model == MODEL_EPSON_TPS) ? "epson-tps" :
-           (cfg.model == MODEL_ADAM) ? "adam" : "mps803",
+           (cfg.model == MODEL_ADAM) ? "adam" :
+           (cfg.model == MODEL_MPS803) ? "mps803" :
+           (cfg.model == MODEL_SW2500) ? "stylewriter2500" :
+           (cfg.model == MODEL_SW1500) ? "stylewriter1500" : "stylewriter2",
            cfg.core_name, cfg.baud, cfg.device, cfg.output_dir);
 
-    int fd = open_serial_port(cfg.device, cfg.baud);
+    int fd = open_serial_port(cfg.device, cfg.baud, !is_stylewriter(cfg.model));
     if (fd < 0) {
         return 1;
     }
@@ -325,6 +351,9 @@ int main(int argc, char **argv) {
     job.sniff_len = 0;
     job.paper_size = cfg.paper_size;
     job.dpi = cfg.dpi;
+    job.verbose = cfg.verbose;
+    // Bidirectional printers (StyleWriter) answer the host on the serial port
+    job.reply_fd = (fd != STDIN_FILENO && isatty(fd)) ? fd : -1;
     canvas_init(&job.canvas, cfg.dpi, cfg.paper_size);
 
     if (job.model != MODEL_AUTO) {
@@ -412,6 +441,7 @@ int main(int argc, char **argv) {
                         dispatch_byte(&job, job.sniff_buf[j]);
                     }
                 }
+                if (is_stylewriter(job.model)) parser_stylewriter_flush(&job);
                 job_finalize(&job, &cfg);
                 if (job.model == MODEL_AUTO) {
                     job.active_model = MODEL_AUTO;
@@ -434,6 +464,7 @@ int main(int argc, char **argv) {
                 dispatch_byte(&job, job.sniff_buf[j]);
             }
         }
+        if (is_stylewriter(job.model)) parser_stylewriter_flush(&job);
         job_finalize(&job, &cfg);
     }
 

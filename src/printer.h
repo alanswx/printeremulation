@@ -18,7 +18,10 @@ typedef enum {
     MODEL_EPSON,
     MODEL_EPSON_TPS,
     MODEL_ADAM,
-    MODEL_MPS803
+    MODEL_MPS803,
+    MODEL_SW2500,       // Color StyleWriter 2500 (bidirectional, 360 dpi CMYK)
+    MODEL_SW1500,       // Color StyleWriter 1500
+    MODEL_SW2           // StyleWriter II (monochrome)
 } PrinterModel;
 
 typedef enum {
@@ -63,6 +66,8 @@ typedef struct {
     char current_job_path[512];
     bool job_active;
     long last_data_time; // timestamp of last received byte (seconds)
+    int reply_fd;        // serial fd for printer->host replies (-1 when replaying a file)
+    bool verbose;
 } JobState;
 
 typedef struct {
@@ -105,5 +110,9 @@ void parser_adam_byte(JobState *job, uint8_t byte);
 
 void parser_mps803_init(JobState *job);
 void parser_mps803_byte(JobState *job, uint8_t byte);
+
+void parser_stylewriter_init(JobState *job, PrinterModel variant);
+void parser_stylewriter_byte(JobState *job, uint8_t byte);
+void parser_stylewriter_flush(JobState *job);
 
 #endif // PRINTER_H
